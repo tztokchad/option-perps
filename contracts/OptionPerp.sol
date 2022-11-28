@@ -72,10 +72,11 @@ contract OptionPerp is Ownable {
 
   mapping (uint => EpochData) public epochData;
 
-  uint constant public divisor  = 1e8;
+  uint public divisor  = 1e8;
   uint public fundingRate       = 3650000000; // 36.5% annualized (0.1% a day)
   uint public fee_openPosition  = 5000000; // 0.05%
   uint public fee_closePosition = 5000000; // 0.05%
+  uint public fee_liquidation  = 50000000; // 0.5% 
 
   struct EpochLPData {
     // Total asset deposits
@@ -188,6 +189,14 @@ contract OptionPerp is Ownable {
     uint size,
     uint pnl,
     uint indexed user
+  );
+
+  event LiquidatePosition(
+    uint indexed id,
+    uint margin,
+    uint price,
+    uint liquidationFee,
+    address indexed liquidator
   );
 
   event InitWithdraw(
@@ -564,9 +573,42 @@ contract OptionPerp is Ownable {
   function liquidate(
     uint id
   ) external {
-    // Check if position is sufficiently collateralized
+    // Check if position is not sufficiently collateralized
     require(!_isPositionCollateralized(id), "Position has enough collateral")
 
+    uint liquidationFee = perpPositions[id].margin * fee_liquidation / divisor;
+    
+    epochLpData[currentEpoch][isShort].margin -= perpPositions[id].margin;
+    epochLpData[currentEpoch][isShort].activeDeposits -= perpPositions[id].size;
+    epochLpData[currentEpoch][isShort].totalDeposits += 
+      perpPositions[id].size + perpPositions[id].margin - liquidationFee;
+    epochLpData[currentEpoch][isShort].oi -= perpPositions[id].size;
+    epochLpData[currentEpoch][isShort].positions -= perpPositions[id].positions;
+
+    epochLpData[currentEpoch][isShort].averageOpenPrice  = 
+      epochLpData[currentEpoch][isShort].size / 
+      epochLpData[currentEpoch][isShort].positions;
+
+    epochLpData[currentEpoch][isShort].longDelta -= perpPositions[id].size;
+    epochLpData[currentEpoch][!isShort].shortDelta -= perpPositions[id].size;
+
+    perpPositions[id].isOpen = false;
+    perpPositions[id].pnl = -1 * perpPositions[id].margin;
+
+    // Transfer liquidation fee to sender
+    IERC20(perpPositions[id].isShort ? quote : base).
+      transfer(
+        msg.sender, 
+        liquidationFee
+      );
+
+    emit LiquidatePosition(
+      id,
+      perpPositions[id].margin,
+      _getMarkPrice(),
+      liquidationFee,
+      msg.sender
+    )
   }
 
 }
