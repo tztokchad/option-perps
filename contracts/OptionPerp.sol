@@ -70,7 +70,12 @@ contract OptionPerp is Ownable {
   mapping (uint => LPPosition) public lpPositions;
   mapping (uint => PerpPosition) public perpPositions;
 
-  struct (uint => EpochData) public epochData;
+  mapping (uint => EpochData) public epochData;
+
+  uint constant public divisor  = 1e8;
+  uint public fundingRate       = 3650000000; // 36.5% annualized (0.1% a day)
+  uint public fee_openPosition  = 5000000; // 0.05%
+  uint public fee_closePosition = 5000000; // 0.05%
 
   struct EpochLPData {
     // Total asset deposits
@@ -342,10 +347,10 @@ contract OptionPerp is Ownable {
     uint premium = _calculatePremium(size);
 
     // Calculate funding
-    uint funding = _calculateFunding(isShort, size);
+    uint funding = _calculateFunding(isShort, size - collateralAmount);
 
     // Calculate fees
-    uint fees = _calculateFees(size, premium, funding);
+    uint fees = _calculateFees(true, size);
 
     // Calculate minimum collateral
     uint minCollateral = size * ((premium * 2) + fees + funding) / _getMarkPrice();
@@ -412,22 +417,21 @@ contract OptionPerp is Ownable {
 
   // Calculate funding for opening a position until expiry
   function _calculateFunding(
-    uint size,
-    uint premium,
-    uint funding
+    bool isShort,
+    uint borrowed
   ) internal 
-  returns (uint premium) {
-
+  returns (uint funding) {
+    // ((Borrowed * funding rate)/(divisor * 100))/token decimals;
+    funding = (((borrowed * fundingRate) / divisor * 1e2) / 1e18 * 1 day) / (epochData[currentEpoch].expiry - block.timestamp); 
   }
 
   // Calculate fees for opening a perp position
   function _calculateFees(
-    uint premium,
-    uint funding,
+    bool openingPosition,
     uint size
   ) internal 
-  returns (uint premium) {
-
+  returns (uint fees) {
+    fees = (size * (openingPosition ? fee_openPosition : fee_closePosition)) / divisor;
   }
 
   // Returns price of base asset from oracle
