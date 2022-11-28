@@ -124,6 +124,8 @@ contract OptionPerp is Ownable {
     bool isShort;
     // Epoch
     uint epoch;
+    // Open position count (in base asset)
+    uint positions;
     // Total size in asset
     uint size;
     // Average open price
@@ -136,6 +138,8 @@ contract OptionPerp is Ownable {
     uint fees;
     // Funding for position
     uint funding;
+    // Final PNL of position
+    int pnl;
     // Owner of perp position
     address owner;
   }
@@ -173,10 +177,17 @@ contract OptionPerp is Ownable {
     uint indexed id
   );
 
-  event AddToPosition(
+  event AddCollateralToPosition(
     uint indexed id,
     uint amount,
     address indexed sender
+  );
+
+  event ClosePerpPosition(
+    uint indexed id,
+    uint size,
+    uint pnl,
+    uint indexed user
   );
 
   event InitWithdraw(
@@ -466,6 +477,7 @@ contract OptionPerp is Ownable {
     require(perpPositions[id].isOpen, "Position not open");
     // Check if position is in current epoch
     require(perpPositions[id].epoch == currentEpoch, "Invalid epoch");
+    epochLpData[currentEpoch][perpPositions[id].isShort].margin += collateralAmount;
     perpPositions[id].margin += collateralAmount;
     IERC20(perpPositions[id].isShort ? quote : base)
       .transferFrom(
@@ -473,7 +485,7 @@ contract OptionPerp is Ownable {
         address(this), 
         collateralAmount
       );
-    emit AddToPosition(
+    emit AddCollateralToPosition(
       id,
       collateralAmount,
       msg.sender
@@ -491,14 +503,61 @@ contract OptionPerp is Ownable {
   function _isPositionCollateralized(uint id)
   external
   returns (bool isCollateralized) {
-    isCollateralized = perpPositions[id].margin >= _getPositionValue(id);
+    isCollateralized = 
+      perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees >= 
+      _getPositionValue(id);
   }
 
   // Close an existing position
   function closePosition(
     uint id
   ) external {
+    // Check if position is open
+    require(perpPositions[id].isOpen, "Position not open");
+    // Sender must be owner of position
+    require(perpPositions[id].owner == msg.sender, "Invalid sender");
+    // Check if position is in current epoch
+    require(perpPositions[id].epoch == currentEpoch, "Invalid epoch");
+    // Position must be sufficiently collateralized
+    require(_isPositionCollateralized(id), "Position is not collateralized");
 
+    uint positionValue = _getPositionValue(id);
+    // Calculate pnl
+    int pnl = perpPositions[id].isShort ? 
+      perpPositions[id].averageOpenPrice - positionValue :
+      positionValue - perpPositions[id].averageOpenPrice;
+    // Settle option positions
+    bool isShort = perpPositions[id].isShort;
+    
+    epochLpData[currentEpoch][isShort].margin -= perpPositions[id].margin;
+    epochLpData[currentEpoch][isShort].activeDeposits -= perpPositions[id].size;
+    epochLpData[currentEpoch][isShort].totalDeposits += perpPositions[id].size - pnl;
+    epochLpData[currentEpoch][isShort].oi -= perpPositions[id].size;
+    epochLpData[currentEpoch][isShort].positions -= perpPositions[id].positions;
+
+    epochLpData[currentEpoch][isShort].averageOpenPrice  = 
+      epochLpData[currentEpoch][isShort].size / 
+      epochLpData[currentEpoch][isShort].positions;
+
+    epochLpData[currentEpoch][isShort].longDelta -= perpPositions[id].size;
+    epochLpData[currentEpoch][!isShort].shortDelta -= perpPositions[id].size;
+
+    perpPositions[id].isOpen = false;
+    perpPositions[id].pnl = pnl;
+
+    // Transfer collateral + PNL to user
+    IERC20(perpPositions[id].isShort ? quote : base).
+      transfer(
+        perpPositions[id].owner, 
+        uint(perpPositions[id].margin + pnl)
+      );
+
+    emit ClosePerpPosition(
+      id,
+      perpPositions[id].size,
+      pnl,
+      msg.sender
+    );
   }
 
   // Liquidate a position passed the liquidation threshold
