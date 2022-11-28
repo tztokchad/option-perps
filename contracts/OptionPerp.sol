@@ -118,6 +118,8 @@ contract OptionPerp is Ownable {
   }
 
   struct PerpPosition {
+    // Is position open
+    bool isOpen;
     // Is short position
     bool isShort;
     // Epoch
@@ -134,6 +136,8 @@ contract OptionPerp is Ownable {
     uint fees;
     // Funding for position
     uint funding;
+    // Owner of perp position
+    address owner;
   }
 
   struct LPPosition {
@@ -149,6 +153,8 @@ contract OptionPerp is Ownable {
     uint toWithdrawEpoch;
     // If withdrawn, true
     bool hasWithdrawn;
+    // Owner of LP position
+    address owner;
   }
 
   event Deposit(
@@ -156,7 +162,7 @@ contract OptionPerp is Ownable {
     uint amount,
     uint epoch,
     address indexed user,
-    uint id
+    uint indexed id
   );
 
   event OpenPerpPosition(
@@ -164,7 +170,13 @@ contract OptionPerp is Ownable {
     uint size,
     uint collateralAmount,
     address indexed user,
-    uint id
+    uint indexed id
+  );
+
+  event AddToPosition(
+    uint indexed id,
+    uint amount,
+    address indexed sender
   );
 
   event InitWithdraw(
@@ -208,7 +220,8 @@ contract OptionPerp is Ownable {
     lpPositions[id] = LPPosition({
       isQuote: isQuote,
       amount: amount,
-      epoch: nextEpoch
+      epoch: nextEpoch,
+      owner: msg.sender
     });
     emit Deposit(
       isQuote,
@@ -387,6 +400,7 @@ contract OptionPerp is Ownable {
     // Generate perp position NFT
     uint id = perpPositionMinter.mint(msg.sender);
     perpPositions[id] = PerpPosition({
+      isOpen: true,
       isShort: isShort,
       epoch: currentEpoch,
       size: size,
@@ -394,7 +408,8 @@ contract OptionPerp is Ownable {
       margin: collateralAmount,
       premium: premium,
       fees: fees,
-      funding: funding
+      funding: funding,
+      owner: msg.sender
     });
 
     // Emit open perp position event
@@ -422,7 +437,8 @@ contract OptionPerp is Ownable {
   ) internal 
   returns (uint funding) {
     // ((Borrowed * funding rate)/(divisor * 100))/token decimals;
-    funding = (((borrowed * fundingRate) / divisor * 1e2) / 1e18 * 1 day) / (epochData[currentEpoch].expiry - block.timestamp); 
+    funding = (((borrowed * fundingRate) / divisor * 1e2) / 1e18 * 1 day) / 
+              (epochData[currentEpoch].expiry - block.timestamp); 
   }
 
   // Calculate fees for opening a perp position
@@ -446,7 +462,36 @@ contract OptionPerp is Ownable {
     uint id,
     uint collateralAmount
   ) external {
+    // Check if position is open
+    require(perpPositions[id].isOpen, "Position not open");
+    // Check if position is in current epoch
+    require(perpPositions[id].epoch == currentEpoch, "Invalid epoch");
+    perpPositions[id].margin += collateralAmount;
+    IERC20(perpPositions[id].isShort ? quote : base)
+      .transferFrom(
+        msg.sender, 
+        address(this), 
+        collateralAmount
+      );
+    emit AddToPosition(
+      id,
+      collateralAmount,
+      msg.sender
+    );
+  }
 
+  // Get value of an open perp position
+  function _getPositionValue(uint id) 
+  external
+  returns (uint value) {
+    value = perpPositions[id].size * _getMarkPrice() / perpPositions[id].averageOpenPrice;
+  }
+
+  // Checks whether a position is sufficiently collateralized
+  function _isPositionCollateralized(uint id)
+  external
+  returns (bool isCollateralized) {
+    isCollateralized = perpPositions[id].margin >= _getPositionValue(id);
   }
 
   // Close an existing position
@@ -460,6 +505,8 @@ contract OptionPerp is Ownable {
   function liquidate(
     uint id
   ) external {
+    // Check if position is sufficiently collateralized
+    require(!_isPositionCollateralized(id), "Position has enough collateral")
 
   }
 
