@@ -68,6 +68,7 @@ contract OptionPerp is Ownable {
   // mapping (epoch => (isQuote => epoch lp data))
   mapping (uint => mapping (bool => EpochLPData)) public epochLpData;
   mapping (uint => LPPosition) public lpPositions;
+  mapping (uint => PerpPosition) public perpPositions;
 
   struct (uint => EpochData) public epochData;
 
@@ -112,7 +113,7 @@ contract OptionPerp is Ownable {
   }
 
   struct PerpPosition {
-    // Is short positionn
+    // Is short position
     bool isShort;
     // Epoch
     uint epoch;
@@ -128,8 +129,6 @@ contract OptionPerp is Ownable {
     uint fees;
     // Funding for position
     uint funding;
-    // Delta for open position
-    int delta;
   }
 
   struct LPPosition {
@@ -155,6 +154,14 @@ contract OptionPerp is Ownable {
     uint id
   );
 
+  event OpenPerpPosition(
+    bool isShort,
+    uint size,
+    uint collateralAmount,
+    address indexed user,
+    uint id
+  );
+
   event InitWithdraw(
     uint id,
     address indexed user
@@ -170,6 +177,10 @@ contract OptionPerp is Ownable {
     address _base,
     address _quote
   ) {
+    require(base != address(0), "Invalid base token");
+    require(quote != address(0), "Invalid quote token");
+    base = _base;
+    quote = _quote;
     lpPositionMinter   = new ILPPositionMinter();
     perpPositionMinter = new IPerpPositionMinter();
   }
@@ -337,11 +348,12 @@ contract OptionPerp is Ownable {
     uint fees = _calculateFees(size, premium, funding);
 
     // Calculate minimum collateral
-    uint minCollateral = _getMarkPrice() / ((premium * 2) + fees + funding);
+    uint minCollateral = size * ((premium * 2) + fees + funding) / _getMarkPrice();
     
     // Check if collateral amount is sufficient for short side of trade and long premium
     require(
-      collateralAmount >= minCollateral,
+      collateralAmount >= minCollateral &&
+      collateralAmount < size,
       "Collateral must be greater than min. collateral"
     );
 
@@ -364,9 +376,30 @@ contract OptionPerp is Ownable {
         epochLpData[currentEpoch][isShort].size / 
         epochLpData[currentEpoch][isShort].positions;
 
-    // 
+    // Transfer collateral from user
+    IERC20(isShort ? quote : base).transferFrom(msg.sender, address(this), collateralAmount);
 
+    // Generate perp position NFT
+    uint id = perpPositionMinter.mint(msg.sender);
+    perpPositions[id] = PerpPosition({
+      isShort: isShort,
+      epoch: currentEpoch,
+      size: size,
+      averageOpenPrice: _getMarkPrice(),
+      margin: collateralAmount,
+      premium: premium,
+      fees: fees,
+      funding: funding
+    });
 
+    // Emit open perp position event
+    emit OpenPerpPosition(
+      isShort,
+      size,
+      collateralAmount,
+      user,
+      id
+    );
   }
 
   // Calculate premium for longing an ATM option
