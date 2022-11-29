@@ -81,15 +81,17 @@ contract OptionPerp is Ownable {
 
   mapping (uint => EpochData) public epochData;
 
-  uint public divisor  = 1e8;
+  uint public divisor           = 1e8;
   uint public fundingRate       = 3650000000; // 36.5% annualized (0.1% a day)
   uint public fee_openPosition  = 5000000; // 0.05%
   uint public fee_closePosition = 5000000; // 0.05%
-  uint public fee_liquidation  = 50000000; // 0.5% 
+  uint public fee_liquidation   = 50000000; // 0.5% 
 
   struct EpochLPData {
+    // Starting asset deposits
+    uint startingDeposits;
     // Total asset deposits
-    uint totalDeposits;
+    int totalDeposits;
     // Active deposits for option writes
     uint activeDeposits;
     // Average price of all positions taken by LP
@@ -112,6 +114,8 @@ contract OptionPerp is Ownable {
     int shortDelta;
     // End of epoch PNL
     int pnl;
+    // Queued withdrawals
+    uint withdrawalQueue;
     // Amount withdrawn
     uint withdrawn;
   }
@@ -283,6 +287,8 @@ contract OptionPerp is Ownable {
     require(!lpPositions[id].hasWithdrawn, "Already withdrawn");
 
     lpPositions[id].toWithdraw = true;
+
+    epochLpData[currentEpoch + 1].withdrawalQueue += amount; 
     
     emit InitWithdraw(
       id,
@@ -329,8 +335,8 @@ contract OptionPerp is Ownable {
     uint epoch = lpPositions[id].toWithdrawEpoch;
     uint amount = lpPositions[id].amount;
     uint totalDeposits = epochLpData[epoch][isQuote].totalDeposits;
-    int pnl = epochLpData[epoch][isQuote].pnl;
-    finalLpAmount = amount * (uint)(totalDeposits + pnl) / totalDeposits;
+    uint startingDeposits = epochLpData[epoch][isQuote].startingDeposits;
+    finalLpAmount = amount * totalDeposits / startingDeposits;
   }
 
   // Expires an epoch and bootstraps the next epoch
@@ -351,7 +357,7 @@ contract OptionPerp is Ownable {
     // Base LP: Call liquidity
     // Quote LP: Put liquidity
 
-    // Calculate short LP payout from OI in quote asset
+    // Calculate short LP payout from OI in quote asset for remaining positions
     // If expiry price > average open price, put writers have to pay out nothing
     // else, put writers pnl = (exp - avg. open price) * oi/avg. open price
     // for example, exp: 500, avgOpen: 1000, oi: 1000 
@@ -360,24 +366,30 @@ contract OptionPerp is Ownable {
       expiryPrice > epochLpData[currentEpoch][true].averageOpenPrice ? 0 :
       (expiryPrice - epochLpData[currentEpoch][true].averageOpenPrice) *
       oi/epochLpData[currentEpoch][true].averageOpenPrice;
-    // Calculate long LP payout from OI in base asset
+
+    // Calculate long LP payout from OI in base asset for remaining positions
     int baseLpPayout = 
       epochLpData[currentEpoch][false].averageOpenPrice > expiryPrice ? 0 :
       ((epochLpData[currentEpoch][false].averageOpenPrice - expiryPrice) * oi/expiryPrice)/expiryPrice;
       // exp: 500, avgOpen: 1000, oi: 1000, (1000 - 500) * 1000/500
 
-    // Calculate quote pnl in quote asset
-    epochLpData[currentEpoch][true].pnl = 
-      quoteLpPayout + epochLpData[currentEpoch][true].premium + 
-      epochLpData[currentEpoch][true].fees + 
-      epochLpData[currentEpoch][true].funding;
 
-    // Calculate base pnl in base asset
-    epochLpData[currentEpoch][false].pnl = 
-      baseLpPayout + epochLpData[currentEpoch][false].premium + 
-      epochLpData[currentEpoch][false].fees + 
-      epochLpData[currentEpoch][false].funding;
-    
+    epochLpData[currentEpoch][true].pnl  -= baseLpPayout;
+    epochLpData[currentEpoch][false].pnl -= quoteLpPayout;
+
+    epochLpData[currentEpoch][true].totalDeposits  -= baseLpPayout;
+    epochLpData[currentEpoch][false].totalDeposits -= quoteLpPayout;
+
+    uint nextEpochStartingDeposits = 
+      epochLpData[currentEpoch][true].totalDeposits - 
+      (epochLpData[currentEpoch][true].withdrawalQueue * 
+      epochLpData[currentEpoch][true].totalDeposits / 
+      epochLpData[currentEpoch][true].startingDeposits);
+
+    epochLpData[currentEpoch + 1][true].totalDeposits   += nextEpochStartingDeposits;
+    epochLpData[currentEpoch + 1][true].startingDeposits = nextEpochStartingDeposits;
+
+    currentEpoch += 1;
   }
 
   // Open a new position
@@ -584,6 +596,7 @@ contract OptionPerp is Ownable {
     epochLpData[currentEpoch][isShort].margin -= perpPositions[id].margin;
     epochLpData[currentEpoch][isShort].activeDeposits -= perpPositions[id].size;
     epochLpData[currentEpoch][isShort].totalDeposits += perpPositions[id].size - pnl;
+    epochLpData[currentEpoch][isShort].pnl -= pnl;
     epochLpData[currentEpoch][isShort].oi -= perpPositions[id].size;
     epochLpData[currentEpoch][isShort].positions -= perpPositions[id].positions;
 
