@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.9;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-import "interface/ILPPositionMinter.sol";
-import "interface/IPerpPositionMinter.sol";
+import {ILPPositionMinter} from "interface/ILPPositionMinter.sol";
+import {IPerpPositionMinter} from "interface/IPerpPositionMinter.sol";
+
+import {IOptionPricing} from "interface/IOptionPricing.sol";
+import {IVolatilityOracle} from "interface/IVolatilityOracle.sol";
+import {IPriceOracle} from "interface/IPriceOracle.sol";
 
 import "hardhat/console.sol";
 
@@ -57,11 +61,16 @@ import "hardhat/console.sol";
 
 contract OptionPerp is Ownable {
 
-  IERC20 base;
-  IERC20 quote;
+  IERC20 public base;
+  IERC20 public quote;
 
-  ILPPositionMinter lpPositionMinter;
-  IPerpPositionMinter perpPositionMinter;
+  IOptionPricing public optionPricing;
+  IVolatilityOracle public volatilityOracle;
+  IPriceOracle public priceOracle;
+
+  ILPPositionMinter public lpPositionMinter;
+  IPerpPositionMinter public perpPositionMinter;
+
 
   uint currentEpoch;
 
@@ -212,12 +221,22 @@ contract OptionPerp is Ownable {
 
   constructor(
     address _base,
-    address _quote
+    address _quote,
+    address _optionPricing,
+    address _volatilityOracle,
+    address _priceOracle
   ) {
     require(base != address(0), "Invalid base token");
     require(quote != address(0), "Invalid quote token");
+    require(_optionPricing != address(0), "Invalid option pricing");
+    require(_volatilityOracle != address(0), "Invalid volatility oracle");
+    require(_priceOracle != address(0), "Invalid price oracle");
     base = _base;
     quote = _quote;
+    optionPricing = _optionPricing;
+    volatilityOracle = _volatilityOracle;
+    priceOracle = _priceOracle;
+
     lpPositionMinter   = new ILPPositionMinter();
     perpPositionMinter = new IPerpPositionMinter();
   }
@@ -444,10 +463,33 @@ contract OptionPerp is Ownable {
 
   // Calculate premium for longing an ATM option
   function _calculatePremium(
-    uint size
+    uint _strike,
+    uint _size
   ) internal 
   returns (uint premium) {
+    premium = (optionPricing.getOptionPrice(
+        isPut,
+        epochData[currentEpoch].expiry,
+        _strike,
+        _strike,
+        getVolatility(_strike)
+    ) * _amount);
 
+    // For base asset,
+    // premium =
+    //     (premium * collateralPrecision) /
+    //     (_getMarkPrice() * OPTIONS_PRECISION);
+  }
+
+  // Returns the volatility from the volatility oracle
+  function getVolatility(uint256 _strike) 
+  public 
+  view 
+  returns (uint256 volatility) {
+    volatility = 
+        volatilityOracle.getVolatility(
+          _strike
+        );
   }
 
   // Calculate funding for opening a position until expiry
@@ -474,7 +516,7 @@ contract OptionPerp is Ownable {
   function _getMarkPrice()
   external
   returns (uint price) {
-
+    return priceOracle.getCollateralPrice();
   }
 
   // Add collateral to an existing position
@@ -488,6 +530,7 @@ contract OptionPerp is Ownable {
     require(perpPositions[id].epoch == currentEpoch, "Invalid epoch");
     epochLpData[currentEpoch][perpPositions[id].isShort].margin += collateralAmount;
     perpPositions[id].margin += collateralAmount;
+    // Move collateral
     IERC20(perpPositions[id].isShort ? quote : base)
       .transferFrom(
         msg.sender, 
