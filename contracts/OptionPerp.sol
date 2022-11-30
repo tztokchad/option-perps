@@ -107,10 +107,10 @@ contract OptionPerp is Ownable {
     uint funding;
     // Total open interest (in asset)
     uint oi;
-    // Total long delta
-    int longDelta;
-    // Total short delta
-    int shortDelta;
+    // // Total long delta
+    // int longDelta;
+    // // Total short delta
+    // int shortDelta;
     // End of epoch PNL
     int pnl;
     // Queued withdrawals
@@ -445,8 +445,8 @@ contract OptionPerp is Ownable {
     epochLpData[currentEpoch][isShort].activeDeposits    += size;
     epochLpData[currentEpoch][isShort].positions         += positions;
 
-    epochLpData[currentEpoch][isShort].longDelta   += (int)(size);
-    epochLpData[currentEpoch][!isShort].shortDelta += (int)(size);
+    // epochLpData[currentEpoch][isShort].longDelta   += (int)(size);
+    // epochLpData[currentEpoch][!isShort].shortDelta += (int)(size);
 
     if (epochLpData[currentEpoch][isShort].averageOpenPrice == 0) 
       epochLpData[currentEpoch][isShort].averageOpenPrice  = _getMarkPrice();
@@ -616,8 +616,8 @@ contract OptionPerp is Ownable {
       epochLpData[currentEpoch][isShort].oi / 
       epochLpData[currentEpoch][isShort].positions;
 
-    epochLpData[currentEpoch][isShort].longDelta -= (int)(perpPositions[id].size);
-    epochLpData[currentEpoch][!isShort].shortDelta -= (int)(perpPositions[id].size);
+    // epochLpData[currentEpoch][isShort].longDelta -= (int)(perpPositions[id].size);
+    // epochLpData[currentEpoch][!isShort].shortDelta -= (int)(perpPositions[id].size);
 
     perpPositions[id].isOpen = false;
     perpPositions[id].pnl = pnl;
@@ -658,8 +658,8 @@ contract OptionPerp is Ownable {
       epochLpData[currentEpoch][isShort].oi / 
       epochLpData[currentEpoch][isShort].positions;
 
-    epochLpData[currentEpoch][isShort].longDelta -= (int)(perpPositions[id].size);
-    epochLpData[currentEpoch][!isShort].shortDelta -= (int)(perpPositions[id].size);
+    // epochLpData[currentEpoch][isShort].longDelta -= (int)(perpPositions[id].size);
+    // epochLpData[currentEpoch][!isShort].shortDelta -= (int)(perpPositions[id].size);
 
     perpPositions[id].isOpen = false;
     perpPositions[id].pnl = -1 * (int)(perpPositions[id].margin);
