@@ -1,0 +1,123 @@
+const { expect } = require("chai");
+const { ethers, network } = require("hardhat");
+const { BigNumber } = ethers;
+
+describe("Option Perp", function() {
+  let signers;
+  let owner;
+
+  let usdc;
+  let weth;
+  let priceOracle;
+  let volatilityOracle;
+  let optionPricing;
+  let lpPositionMinter;
+  let perpPositionMinter;
+  let uniswapFactory;
+  let wethUsdcPair;
+  let uniswapRouter;
+  let optionPerp;
+
+  const MAX_UINT =
+    "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+  const oneWeek = 7 * 24 * 60 * 60;
+
+  const toEther = val =>
+    BigNumber.from(10)
+      .pow(18)
+      .mul(val);
+
+  const toDecimals = (val, decimals) =>
+    BigNumber.from(10)
+      .pow(decimals)
+      .mul(val);
+
+  const timeTravel = async seconds => {
+    await network.provider.send("evm_increaseTime", [seconds]);
+    await network.provider.send("evm_mine", []);
+  };
+
+  before(async () => {
+    signers = await ethers.getSigners();
+    owner = signers[0];
+
+    // Users
+    user0 = signers[1];
+    user1 = signers[2];
+    user2 = signers[3];
+  });
+
+  it("should deploy option perp", async function() {
+    // USDC
+    const USDC = await ethers.getContractFactory("USDC");
+    usdc = await USDC.deploy();
+    // WETH
+    const WETH = await ethers.getContractFactory("WETH");
+    weth = await WETH.deploy();
+    // Price oracle
+    const PriceOracle = await ethers.getContractFactory("MockPriceOracle");
+    priceOracle = await PriceOracle.deploy();
+    // Volatility oracle
+    const VolatilityOracle = await ethers.getContractFactory(
+      "MockVolatilityOracle"
+    );
+    volatilityOracle = await VolatilityOracle.deploy();
+    // Option pricing
+    const OptionPricing = await ethers.getContractFactory("MockOptionPricing");
+    optionPricing = await OptionPricing.deploy();
+    // LP position minter
+    const LPPositionMinter = await ethers.getContractFactory(
+      "LPPositionMinter"
+    );
+    lpPositionMinter = await LPPositionMinter.deploy();
+    // Perp position minter
+    const PerpPositionMinter = await ethers.getContractFactory(
+      "PerpPositionMinter"
+    );
+    perpPositionMinter = await PerpPositionMinter.deploy();
+    // Uniswap factory
+    const UniswapFactory = await ethers.getContractFactory("UniswapV2Factory");
+    uniswapFactory = await UniswapFactory.deploy(owner.address);
+    await uniswapFactory.createPair(weth.address, usdc.address);
+    // WETH-USDC pair
+    const wethUsdcPairAddress = await uniswapFactory.getPair(
+      weth.address,
+      usdc.address
+    );
+    const WethUsdcPair = await ethers.getContractFactory("UniswapV2Pair");
+    wethUsdcPair = WethUsdcPair.attach(wethUsdcPairAddress);
+
+    // Uniswap router
+    const UniswapRouter = await ethers.getContractFactory("UniswapV2Router02");
+    uniswapRouter = await UniswapRouter.deploy(
+      uniswapFactory.address,
+      weth.address
+    );
+    // Option Perp
+    const OptionPerp = await ethers.getContractFactory("OptionPerp");
+    optionPerp = await OptionPerp.deploy(
+      usdc.address,
+      weth.address,
+      optionPricing.address,
+      volatilityOracle.address,
+      priceOracle.address
+    );
+    console.log("deployed option perp:", optionPerp.address);
+    await lpPositionMinter.setOptionPerpContract(optionPerp.address);
+    await perpPositionMinter.setOptionPerpContract(optionPerp.address);
+
+    await weth.approve(uniswapRouter.address, MAX_UINT);
+    await usdc.approve(uniswapRouter.address, MAX_UINT);
+
+    await uniswapRouter.addLiquidity(
+      weth.address,
+      usdc.address,
+      toEther(10_000),
+      toDecimals(10_000_000, 6),
+      0,
+      0,
+      owner.address,
+      (await ethers.provider.getBlock("latest")).timestamp + 10
+    );
+  });
+});
