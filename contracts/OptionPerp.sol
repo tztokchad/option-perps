@@ -547,9 +547,9 @@ contract OptionPerp is Ownable {
   view 
   returns (uint256 volatility) {
     volatility = 
-        volatilityOracle.getVolatility(
-          _strike
-        );
+      volatilityOracle.getVolatility(
+        _strike
+      );
   }
 
   // Calculate funding for opening a position until expiry

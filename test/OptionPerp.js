@@ -138,6 +138,9 @@ describe("Option Perp", function() {
     expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
       amount
     );
+    const lpPosition = await optionPerp.lpPositions(0);
+    expect(lpPosition.amount.toString()).equals(amount.toString());
+    expect(lpPosition.owner).equals(owner.address);
   });
 
   it("should not be able to deposit base without sufficient weth balance", async () => {
@@ -149,12 +152,15 @@ describe("Option Perp", function() {
   });
 
   it("should deposit base successfully", async () => {
-    const amount = 10 * 10 ** 6;
+    const amount = (10 * 10 ** 18).toString();
     await weth.approve(optionPerp.address, MAX_UINT);
     await optionPerp.deposit(false, amount);
     expect((await optionPerp.epochLpData(1, false)).totalDeposits).equals(
       amount
     );
+    const lpPosition = await optionPerp.lpPositions(1);
+    expect(lpPosition.amount.toString()).equals(amount.toString());
+    expect(lpPosition.owner).equals(owner.address);
   });
 
   it("should not be able to open position at epoch 0", async () => {
