@@ -572,7 +572,7 @@ contract OptionPerp is Ownable {
   function _getPositionValue(uint id) 
   public
   returns (uint value) {
-    value = perpPositions[id].size * _getMarkPrice() / perpPositions[id].averageOpenPrice;
+    value = perpPositions[id].positions * _getMarkPrice();
   }
 
   // Checks whether a position is sufficiently collateralized
