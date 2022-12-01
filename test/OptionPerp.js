@@ -96,8 +96,8 @@ describe("Option Perp", function() {
     // Option Perp
     const OptionPerp = await ethers.getContractFactory("OptionPerp");
     optionPerp = await OptionPerp.deploy(
-      usdc.address,
       weth.address,
+      usdc.address,
       optionPricing.address,
       volatilityOracle.address,
       priceOracle.address
@@ -118,6 +118,40 @@ describe("Option Perp", function() {
       0,
       owner.address,
       (await ethers.provider.getBlock("latest")).timestamp + 10
+    );
+  });
+
+  it("should not be able to deposit quote without sufficient usd balance", async () => {
+    const amount = 10000 * 10 ** 6;
+    await usdc.connect(user1).approve(optionPerp.address, MAX_UINT);
+    await expect(
+      optionPerp.connect(user1).deposit(true, amount)
+    ).to.be.revertedWith("ERC20: transfer amount exceeds balance");
+  });
+
+  it("should deposit quote successfully", async () => {
+    const amount = 10000 * 10 ** 6;
+    await usdc.approve(optionPerp.address, MAX_UINT);
+    await optionPerp.deposit(true, amount);
+    expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
+      amount
+    );
+  });
+
+  it("should not be able to deposit base without sufficient weth balance", async () => {
+    const amount = 10 * 10 ** 6;
+    await weth.connect(user1).approve(optionPerp.address, MAX_UINT);
+    await expect(
+      optionPerp.connect(user1).deposit(false, amount)
+    ).to.be.revertedWith("ERC20: transfer amount exceeds balance");
+  });
+
+  it("should deposit base successfully", async () => {
+    const amount = 10 * 10 ** 6;
+    await weth.approve(optionPerp.address, MAX_UINT);
+    await optionPerp.deposit(false, amount);
+    expect((await optionPerp.epochLpData(1, false)).totalDeposits).equals(
+      amount
     );
   });
 });
