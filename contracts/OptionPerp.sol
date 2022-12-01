@@ -71,7 +71,7 @@ contract OptionPerp is Ownable {
   LPPositionMinter public lpPositionMinter;
   PerpPositionMinter public perpPositionMinter;
 
-  uint currentEpoch;
+  uint public currentEpoch;
 
   // mapping (epoch => (isQuote => epoch lp data))
   mapping (uint => mapping (bool => EpochLPData)) public epochLpData;
@@ -358,11 +358,17 @@ contract OptionPerp is Ownable {
   ) 
   external
   onlyOwner {
-    if (currentEpoch != 0) {
-      require(epochData[currentEpoch].expiry < block.timestamp, "Time must be after expiry");
-      require(nextExpiryTimestamp > epochData[currentEpoch].expiry, "Invalid next expiry timestamp");
-      uint nextEpoch = currentEpoch + 1;
-      epochData[nextEpoch].expiry = nextExpiryTimestamp;
+    uint nextEpoch = currentEpoch + 1;
+    epochData[nextEpoch].expiry = nextExpiryTimestamp;
+    if (currentEpoch > 0) {
+      require(
+        epochData[currentEpoch].expiry < block.timestamp, 
+        "Cannot bootstrap before the current epoch was expired"
+      );
+      require(
+        nextExpiryTimestamp > epochData[currentEpoch].expiry, 
+        "Invalid next expiry timestamp"
+      );
 
       // Get expiry price
       uint expiryPrice; // = _getCurrentPrice();
@@ -432,9 +438,10 @@ contract OptionPerp is Ownable {
     uint size,
     uint collateralAmount
   ) external returns (uint id) {
+    // Must not be epoch 0
+    require(currentEpoch > 0, "Invalid epoch");
     // Check for expiry
     require(epochData[currentEpoch].expiry < block.timestamp, "Time must be before expiry");
-
     // Check if enough liquidity is available to open position
     require(
       epochLpData[currentEpoch][isShort].totalDeposits - (int)(epochLpData[currentEpoch][isShort].activeDeposits) >= 

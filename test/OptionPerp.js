@@ -32,6 +32,8 @@ describe("Option Perp", function() {
       .pow(decimals)
       .mul(val);
 
+  const getTime = () => Math.floor(new Date().getTime() / 1000);
+
   const timeTravel = async seconds => {
     await network.provider.send("evm_increaseTime", [seconds]);
     await network.provider.send("evm_mine", []);
@@ -152,6 +154,35 @@ describe("Option Perp", function() {
     await optionPerp.deposit(false, amount);
     expect((await optionPerp.epochLpData(1, false)).totalDeposits).equals(
       amount
+    );
+  });
+
+  it("should not be able to open position at epoch 0", async () => {
+    await expect(
+      optionPerp.openPosition(
+        false,
+        BigNumber.from(50)
+          .pow(18)
+          .toString(),
+        BigNumber.from(25)
+          .pow(18)
+          .toString()
+      )
+    ).to.be.revertedWith("Invalid epoch");
+  });
+
+  it("should bootstrap successfully", async () => {
+    const oneWeekFromNow = getTime() + oneWeek;
+    await optionPerp.expireAndBootstrap(oneWeekFromNow);
+    expect(await optionPerp.currentEpoch()).equals(1);
+  });
+
+  it("should not bootstrap if current epoch hasn't expired", async () => {
+    const oneWeekFromNow = getTime() + oneWeek;
+    await expect(
+      optionPerp.expireAndBootstrap(oneWeekFromNow)
+    ).to.be.revertedWith(
+      "Cannot bootstrap before the current epoch was expired"
     );
   });
 });
