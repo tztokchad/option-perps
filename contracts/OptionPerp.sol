@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.9;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20} from "./interface/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -84,7 +84,10 @@ contract OptionPerp is Ownable {
   uint public fundingRate       = 3650000000; // 36.5% annualized (0.1% a day)
   uint public fee_openPosition  = 5000000; // 0.05%
   uint public fee_closePosition = 5000000; // 0.05%
-  uint public fee_liquidation   = 50000000; // 0.5% 
+  uint public fee_liquidation   = 50000000; // 0.5%
+
+  uint256 internal constant POSITION_PRECISION = 1e8;
+  uint256 internal constant OPTIONS_PRECISION = 1e18;
 
   struct EpochLPData {
     // Starting asset deposits
@@ -433,75 +436,89 @@ contract OptionPerp is Ownable {
   }
 
   // Open a new position
+  // Long  - long call, short put.  Premium = ETH,  Collateral = USDC
+  // Short - long put, short call.  Premium = USDC, Collateral = ETH
   function openPosition(
-    bool isShort,
-    uint size,
-    uint collateralAmount
+    bool _isShort,
+    uint _size, // in USD (1e8)
+    uint _collateralAmount // in USD (1e8) collateral used to cover premium + funding + fees and write option
   ) external returns (uint id) {
     // Must not be epoch 0
     require(currentEpoch > 0, "Invalid epoch");
     // Check for expiry
-    require(epochData[currentEpoch].expiry < block.timestamp, "Time must be before expiry");
+    require(epochData[currentEpoch].expiry > block.timestamp, "Time must be before expiry");
+    uint _sizeInBase = _size * (10 ** base.decimals()) / _getMarkPrice();
+    console.log('size in base: %s', _sizeInBase);
     // Check if enough liquidity is available to open position
     require(
-      epochLpData[currentEpoch][isShort].totalDeposits - (int)(epochLpData[currentEpoch][isShort].activeDeposits) >= 
-      (int)(size),
+      (epochLpData[currentEpoch][_isShort].totalDeposits - 
+      (int)(epochLpData[currentEpoch][_isShort].activeDeposits)) >= 
+      (_isShort ? (int)(_size) : (int)(_sizeInBase)),
       "Not enough liquidity to open position" 
     );
 
-    // Calculate premium for ATM option
-    uint premium = _calculatePremium(_getMarkPrice(), size);
+    // Calculate premium for ATM option in USD
+    // If is short, premium is in quote.decimals(). if long, base.decimals();
+    uint premium = _calculatePremium(_getMarkPrice(), _size);
+    console.log('Premium: %s', premium);
 
-    // Calculate funding
-    uint funding = _calculateFunding(isShort, size - collateralAmount);
+    // Calculate funding in USD
+    uint funding = _calculateFunding(_size, _collateralAmount);
+    console.log('Funding: %s', funding);
 
     // Calculate fees
-    uint fees = _calculateFees(true, size);
+    uint fees = _calculateFees(true, _size);
+    console.log('Fees: %s', fees);
 
     // Calculate minimum collateral
-    uint minCollateral = size * ((premium * 2) + fees + funding) / _getMarkPrice();
+    uint minCollateral = (premium * 2) + fees + funding;
+    console.log('Min collateral: %s', minCollateral);
     
     // Check if collateral amount is sufficient for short side of trade and long premium
     require(
-      collateralAmount >= minCollateral &&
-      collateralAmount < size,
+      _collateralAmount >= minCollateral,
       "Collateral must be greater than min. collateral"
     );
 
-    uint positions = size / _getMarkPrice();
+    uint positions = _size / _getMarkPrice();
+    console.log('Positions: %s', positions);
 
     // Update epoch LP data
-    epochLpData[currentEpoch][isShort].margin            += collateralAmount;
-    epochLpData[currentEpoch][isShort].oi                += size;
-    epochLpData[currentEpoch][isShort].premium           += premium;
-    epochLpData[currentEpoch][isShort].funding           += funding;
-    epochLpData[currentEpoch][isShort].fees              += fees;
-    epochLpData[currentEpoch][isShort].activeDeposits    += size;
-    epochLpData[currentEpoch][isShort].positions         += positions;
+    epochLpData[currentEpoch][_isShort].margin            += _collateralAmount;
+    epochLpData[currentEpoch][_isShort].oi                += _size;
+    epochLpData[currentEpoch][_isShort].premium           += premium;
+    epochLpData[currentEpoch][_isShort].funding           += funding;
+    epochLpData[currentEpoch][_isShort].fees              += fees;
+    epochLpData[currentEpoch][_isShort].activeDeposits    += _size;
+    epochLpData[currentEpoch][_isShort].positions         += positions;
 
-    // epochLpData[currentEpoch][isShort].longDelta   += (int)(size);
-    // epochLpData[currentEpoch][!isShort].shortDelta += (int)(size);
+    // epochLpData[currentEpoch][_isShort].longDelta   += (int)(size);
+    // epochLpData[currentEpoch][!_isShort].shortDelta += (int)(size);
 
-    if (epochLpData[currentEpoch][isShort].averageOpenPrice == 0) 
-      epochLpData[currentEpoch][isShort].averageOpenPrice  = _getMarkPrice();
+    if (epochLpData[currentEpoch][_isShort].averageOpenPrice == 0) 
+      epochLpData[currentEpoch][_isShort].averageOpenPrice  = _getMarkPrice();
     else
-      epochLpData[currentEpoch][isShort].averageOpenPrice  = 
-        epochLpData[currentEpoch][isShort].oi / 
-        epochLpData[currentEpoch][isShort].positions;
+      epochLpData[currentEpoch][_isShort].averageOpenPrice  = 
+        epochLpData[currentEpoch][_isShort].oi / 
+        epochLpData[currentEpoch][_isShort].positions;
 
     // Transfer collateral from user
-    IERC20(isShort ? quote : base).transferFrom(msg.sender, address(this), collateralAmount);
+    quote.transferFrom(
+        msg.sender, 
+        address(this), 
+        _collateralAmount
+      );
 
     // Generate perp position NFT
     id = perpPositionMinter.mint(msg.sender);
     perpPositions[id] = PerpPosition({
       isOpen: true,
-      isShort: isShort,
+      isShort: _isShort,
       positions: positions,
       epoch: currentEpoch,
-      size: size,
+      size: _size,
       averageOpenPrice: _getMarkPrice(),
-      margin: collateralAmount,
+      margin: _collateralAmount,
       premium: premium,
       fees: fees,
       funding: funding,
@@ -511,9 +528,9 @@ contract OptionPerp is Ownable {
 
     // Emit open perp position event
     emit OpenPerpPosition(
-      isShort,
-      size,
-      collateralAmount,
+      _isShort,
+      _size,
+      _collateralAmount,
       msg.sender,
       id
     );
@@ -525,7 +542,6 @@ contract OptionPerp is Ownable {
     uint _size
   ) 
   internal 
-  view
   returns (uint premium) {
     premium = (optionPricing.getOptionPrice(
         false, // ATM options: does not matter if call or put
@@ -533,12 +549,9 @@ contract OptionPerp is Ownable {
         _strike,
         _strike,
         getVolatility(_strike)
-    ) * _size);
-
-    // For base asset,
-    // premium =
-    //     (premium * collateralPrecision) /
-    //     (_getMarkPrice() * OPTIONS_PRECISION);
+    ) * (_size / _strike));
+    premium =
+      premium / (divisor / 10 ** quote.decimals());
   }
 
   // Returns the volatility from the volatility oracle
@@ -554,26 +567,32 @@ contract OptionPerp is Ownable {
 
   // Calculate funding for opening a position until expiry
   function _calculateFunding(
-    bool isShort,
-    uint borrowed
+    uint _size, // in USD (1e8)
+    uint _collateralAmount // in collateral used to write option. long = usd, short = eth
   ) 
   internal 
-  view
   returns (uint funding) {
-    // ((Borrowed * funding rate)/(divisor * 100))/token decimals;
-    funding = (((borrowed * fundingRate) / divisor * 1e2) / 1e18 * 1 days) / 
-              (epochData[currentEpoch].expiry - block.timestamp); 
+    // ((Borrowed * funding rate)/(36500 * divisor);
+    uint _borrowed = 
+      _size - (_collateralAmount * divisor / 10 ** quote.decimals());
+    funding = 
+      (_borrowed * fundingRate) / 
+      (36500 * divisor * (divisor / 10 ** quote.decimals()));
+    funding = 
+      (funding * (epochData[currentEpoch].expiry - block.timestamp)) /
+      365 days;
   }
 
   // Calculate fees for opening a perp position
   function _calculateFees(
-    bool openingPosition,
-    uint size
+    bool _openingPosition,
+    uint _size
   ) 
   internal 
-  view
   returns (uint fees) {
-    fees = (size * (openingPosition ? fee_openPosition : fee_closePosition)) / divisor;
+    fees = (_size * (_openingPosition ? fee_openPosition : fee_closePosition)) / (100 * divisor);
+    fees = 
+      fees / (divisor / 10 ** quote.decimals());
   }
 
   // Returns price of base asset from oracle
@@ -581,7 +600,7 @@ contract OptionPerp is Ownable {
   public
   view
   returns (uint price) {
-    return priceOracle.getCollateralPrice();
+    return priceOracle.getUnderlyingPrice();
   }
 
   // Add collateral to an existing position
@@ -612,6 +631,7 @@ contract OptionPerp is Ownable {
   // Get value of an open perp position
   function _getPositionValue(uint id) 
   public
+  view
   returns (uint value) {
     value = perpPositions[id].positions * _getMarkPrice();
   }

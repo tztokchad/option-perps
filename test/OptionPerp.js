@@ -165,15 +165,7 @@ describe("Option Perp", function() {
 
   it("should not be able to open position at epoch 0", async () => {
     await expect(
-      optionPerp.openPosition(
-        false,
-        BigNumber.from(50)
-          .pow(18)
-          .toString(),
-        BigNumber.from(25)
-          .pow(18)
-          .toString()
-      )
+      optionPerp.openPosition(false, toDecimals(1000, 8), toDecimals(500, 8))
     ).to.be.revertedWith("Invalid epoch");
   });
 
@@ -190,5 +182,59 @@ describe("Option Perp", function() {
     ).to.be.revertedWith(
       "Cannot bootstrap before the current epoch was expired"
     );
+  });
+
+  it("should not be able to open position if liquidity is insufficient", async () => {
+    await expect(
+      optionPerp.openPosition(false, toDecimals(100000, 8), toDecimals(500, 6))
+    ).to.be.revertedWith("Not enough liquidity to open position");
+  });
+
+  it("should not be able to open position if user doesn't have enough funds", async () => {
+    await expect(
+      optionPerp
+        .connect(user1)
+        .openPosition(false, toDecimals(1000, 8), toDecimals(500, 6))
+    ).to.be.revertedWith("ERC20: transfer amount exceeds balance");
+  });
+
+  it("should open position successfully", async () => {
+    await usdc.transfer(user1.address, toDecimals(10_000, 6));
+    console.log(
+      "user1 balance:",
+      (await usdc.balanceOf(user1.address)).toString()
+    );
+    await optionPerp
+      .connect(user1)
+      .openPosition(false, toDecimals(1000, 8), toDecimals(500, 6));
+    const {
+      isOpen,
+      isShort,
+      positions,
+      epoch,
+      size,
+      averageOpenPrice,
+      margin,
+      premium,
+      fees,
+      funding
+    } = await optionPerp.perpPositions(0);
+    console.log({
+      isOpen,
+      isShort,
+      positions,
+      epoch,
+      size: size.toString(),
+      averageOpenPrice: averageOpenPrice.toString(),
+      margin: margin.toString(),
+      premium: premium.toString(),
+      fees: fees.toString(),
+      funding: funding.toString()
+    });
+    // const cost = "40342338"; // 40.34 premium + funding
+    // expect(amount).equal(toEther("5"));
+    // expect(await usdc.balanceOf(user1.address)).equals(
+    //   BigNumber.from(toDecimals(100_000, 6)).sub(cost)
+    // );
   });
 });
