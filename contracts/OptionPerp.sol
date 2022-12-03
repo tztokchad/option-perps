@@ -615,12 +615,11 @@ contract OptionPerp is Ownable {
     epochLpData[currentEpoch][perpPositions[id].isShort].margin += collateralAmount;
     perpPositions[id].margin += collateralAmount;
     // Move collateral
-    IERC20(perpPositions[id].isShort ? quote : base)
-      .transferFrom(
-        msg.sender, 
-        address(this), 
-        collateralAmount
-      );
+    IERC20(quote).transferFrom(
+      msg.sender, 
+      address(this), 
+      collateralAmount
+    );
     emit AddCollateralToPosition(
       id,
       collateralAmount,
