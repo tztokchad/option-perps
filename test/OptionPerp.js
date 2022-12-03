@@ -207,34 +207,10 @@ describe("Option Perp", function() {
     await optionPerp
       .connect(user1)
       .openPosition(false, toDecimals(1000, 8), toDecimals(500, 6));
-    const {
-      isOpen,
-      isShort,
-      positions,
-      epoch,
-      size,
-      averageOpenPrice,
-      margin,
-      premium,
-      fees,
-      funding
-    } = await optionPerp.perpPositions(0);
-    console.log({
-      isOpen,
-      isShort,
-      positions,
-      epoch,
-      size: size.toString(),
-      averageOpenPrice: averageOpenPrice.toString(),
-      margin: margin.toString(),
-      premium: premium.toString(),
-      fees: fees.toString(),
-      funding: funding.toString()
-    });
-    // const cost = "40342338"; // 40.34 premium + funding
-    // expect(amount).equal(toEther("5"));
-    // expect(await usdc.balanceOf(user1.address)).equals(
-    //   BigNumber.from(toDecimals(100_000, 6)).sub(cost)
-    // );
+    const { size } = await optionPerp.perpPositions(0);
+    expect(size).equal(toDecimals(1000, 8));
+    expect(await usdc.balanceOf(user1.address)).equals(
+      BigNumber.from(toDecimals(10_000, 6)).sub(toDecimals(500, 6))
+    );
   });
 });
