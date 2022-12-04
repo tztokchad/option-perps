@@ -163,6 +163,15 @@ describe("Option Perp", function() {
     expect(lpPosition.owner).equals(owner.address);
   });
 
+  it("should be able to immediately initialize a withdraw, even before first bootstrap", async () => {
+    const amount = (10 * 10 ** 18).toString();
+    await optionPerp.initWithdraw(false, amount, 1);
+  });
+
+  it("should not be able to immediately withdraw", async () => {
+    await expect(optionPerp.withdraw(1)).to.be.revertedWith('To withdraw epoch must be prior to current epoch');
+  });
+
   it("should not be able to open position at epoch 0", async () => {
     await expect(
       optionPerp.openPosition(false, toDecimals(1000, 8), toDecimals(500, 8))
@@ -212,5 +221,9 @@ describe("Option Perp", function() {
     expect(await usdc.balanceOf(user1.address)).equals(
       BigNumber.from(toDecimals(10_000, 6)).sub(toDecimals(500, 6))
     );
+  });
+
+  it("should not be able to withdraw even if correctly initialized before first bootstrap if final lp amount is 0", async () => {
+    await expect(optionPerp.withdraw(1)).to.be.revertedWith('Invalid final lp amount');
   });
 });

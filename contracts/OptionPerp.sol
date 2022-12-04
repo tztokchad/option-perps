@@ -352,6 +352,9 @@ contract OptionPerp is Ownable {
     uint amount = lpPositions[id].amount;
     int totalDeposits = epochLpData[epoch][isQuote].totalDeposits;
     uint startingDeposits = epochLpData[epoch][isQuote].startingDeposits;
+
+    require(startingDeposits > 0, "Invalid final lp amount");
+
     finalLpAmount = amount * (uint)(totalDeposits) / startingDeposits;
   }
 
