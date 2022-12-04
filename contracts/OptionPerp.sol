@@ -480,7 +480,8 @@ contract OptionPerp is Ownable {
       "Collateral must be greater than min. collateral"
     );
 
-    uint positions = _size / _getMarkPrice();
+    // Number of positions (in 8 decimals)
+    uint positions = _size * divisor / _getMarkPrice();
     console.log('Positions: %s', positions);
 
     // Update epoch LP data
@@ -640,7 +641,10 @@ contract OptionPerp is Ownable {
   public
   returns (bool isCollateralized) {
     isCollateralized = 
-      perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees >= 
+      (
+        (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) *
+        divisor/quote.decimals()
+      ) >= 
       _getPositionValue(id);
   }
 
@@ -660,8 +664,8 @@ contract OptionPerp is Ownable {
     uint positionValue = _getPositionValue(id);
     // Calculate pnl
     int pnl = perpPositions[id].isShort ? 
-      (int)(perpPositions[id].averageOpenPrice - positionValue) :
-      (int)(positionValue - perpPositions[id].averageOpenPrice);
+      (int)(perpPositions[id].size - positionValue) :
+      (int)(positionValue - perpPositions[id].size);
     // Settle option positions
     bool isShort = perpPositions[id].isShort;
     
