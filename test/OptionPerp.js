@@ -102,7 +102,8 @@ describe("Option Perp", function() {
       usdc.address,
       optionPricing.address,
       volatilityOracle.address,
-      priceOracle.address
+      priceOracle.address,
+      "0xaBBc5F99639c9B6bCb58544ddf04EFA6802F4064"
     );
     console.log("deployed option perp:", optionPerp.address);
     await lpPositionMinter.setOptionPerpContract(optionPerp.address);

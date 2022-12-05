@@ -12,6 +12,7 @@ import {PerpPositionMinter} from "./positions/PerpPositionMinter.sol";
 import {IOptionPricing} from "./interface/IOptionPricing.sol";
 import {IVolatilityOracle} from "./interface/IVolatilityOracle.sol";
 import {IPriceOracle} from "./interface/IPriceOracle.sol";
+import {IGmxRouter} from "./interface/IGmxRouter.sol";
 
 import "hardhat/console.sol";
 
@@ -70,6 +71,8 @@ contract OptionPerp is Ownable {
 
   LPPositionMinter public lpPositionMinter;
   PerpPositionMinter public perpPositionMinter;
+
+  IGmxRouter public gmxRouter;
 
   uint public currentEpoch;
 
@@ -240,7 +243,8 @@ contract OptionPerp is Ownable {
     address _quote,
     address _optionPricing,
     address _volatilityOracle,
-    address _priceOracle
+    address _priceOracle,
+    address _gmxRouter
   ) {
     require(_base != address(0), "Invalid base token");
     require(_quote != address(0), "Invalid quote token");
@@ -252,6 +256,7 @@ contract OptionPerp is Ownable {
     optionPricing = IOptionPricing(_optionPricing);
     volatilityOracle = IVolatilityOracle(_volatilityOracle);
     priceOracle = IPriceOracle(_priceOracle);
+    gmxRouter = IGmxRouter(_gmxRouter);
 
     lpPositionMinter   = new LPPositionMinter();
     perpPositionMinter = new PerpPositionMinter();
@@ -653,7 +658,8 @@ contract OptionPerp is Ownable {
 
   // Close an existing position
   function closePosition(
-    uint id
+    uint id,
+    uint minAmountOut
   ) external {
     // Check if position is open
     require(perpPositions[id].isOpen, "Position not open");
@@ -689,12 +695,29 @@ contract OptionPerp is Ownable {
     perpPositions[id].isOpen = false;
     perpPositions[id].pnl = pnl;
 
+    uint amountOut;
+
     // Transfer collateral + PNL to user
-    IERC20(perpPositions[id].isShort ? quote : base).
-      transfer(
-        perpPositions[id].owner, 
-        uint((int)(perpPositions[id].margin) + pnl)
-      );
+    if (perpPositions[id].isShort) {
+      amountOut = uint((int)(perpPositions[id].margin) + pnl);
+      require(amountOut >= minAmountOut, "Amount out is not enough");
+    } else {
+      // Convert collateral + PNL to quote and send to user
+      uint amountIn = uint((int)(perpPositions[id].margin) + pnl);
+      address[] memory path;
+
+      path = new address[](2);
+      path[0] = address(base);
+      path[1] = address(quote);
+
+      amountOut = gmxRouter.swap(path, amountIn, minAmountOut, address(this));
+    }
+
+    IERC20(quote).
+        transfer(
+          perpPositions[id].owner,
+          amountOut
+        );
 
     emit ClosePerpPosition(
       id,
