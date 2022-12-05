@@ -227,4 +227,10 @@ describe("Option Perp", function() {
   it("should not be able to withdraw even if correctly initialized before first bootstrap if final lp amount is 0", async () => {
     await expect(optionPerp.withdraw(1)).to.be.revertedWith('Invalid final lp amount');
   });
+
+  it("should be able to close a long position with a profit", async () => {
+    // await priceOracle.updateUnderlyingPrice("1020000000000000000000");
+
+    await optionPerp.connect(user1).closePosition(0, 0);
+  });
 });

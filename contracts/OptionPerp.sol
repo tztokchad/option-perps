@@ -648,6 +648,12 @@ contract OptionPerp is Ownable {
   function _isPositionCollateralized(uint id)
   public
   returns (bool isCollateralized) {
+    console.log((
+        (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) *
+        divisor/quote.decimals()
+      ));
+    console.log(_getPositionValue(id));
+
     isCollateralized = 
       (
         (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) *
