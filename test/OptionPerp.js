@@ -175,7 +175,7 @@ describe("Option Perp", function() {
 
   it("should not be able to open position at epoch 0", async () => {
     await expect(
-      optionPerp.openPosition(false, toDecimals(1000, 8), toDecimals(500, 8))
+      optionPerp.openPosition(false, toDecimals(1000, 8), toDecimals(500, 6))
     ).to.be.revertedWith("Invalid epoch");
   });
 
@@ -204,7 +204,7 @@ describe("Option Perp", function() {
     await expect(
       optionPerp
         .connect(user1)
-        .openPosition(false, toDecimals(1000, 8), toDecimals(500, 6))
+        .openPosition(false, toDecimals(1000, 8), toDecimals(500, 8))
     ).to.be.revertedWith("ERC20: transfer amount exceeds balance");
   });
 
@@ -229,7 +229,7 @@ describe("Option Perp", function() {
   });
 
   it("should be able to close a long position with a profit", async () => {
-    // await priceOracle.updateUnderlyingPrice("1020000000000000000000");
+    await priceOracle.updateUnderlyingPrice("122000000000");
 
     await optionPerp.connect(user1).closePosition(0, 0);
   });

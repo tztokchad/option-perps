@@ -444,12 +444,12 @@ contract OptionPerp is Ownable {
   }
 
   // Open a new position
-  // Long  - long call, short put.  Premium = ETH,  Collateral = USDC
-  // Short - long put, short call.  Premium = USDC, Collateral = ETH
+  // Long  - long call, short put.
+  // Short - long put, short call.
   function openPosition(
     bool _isShort,
     uint _size, // in USD (1e8)
-    uint _collateralAmount // in USD (1e8) collateral used to cover premium + funding + fees and write option
+    uint _collateralAmount // in USD (1e6) collateral used to cover premium + funding + fees and write option
   ) external returns (uint id) {
     // Must not be epoch 0
     require(currentEpoch > 0, "Invalid epoch");
@@ -474,11 +474,11 @@ contract OptionPerp is Ownable {
     uint funding = _calculateFunding(_size, _collateralAmount);
     console.log('Funding: %s', funding);
 
-    // Calculate fees
+    // Calculate fees in USD
     uint fees = _calculateFees(true, _size);
     console.log('Fees: %s', fees);
 
-    // Calculate minimum collateral
+    // Calculate minimum collateral in USD
     uint minCollateral = (premium * 2) + fees + funding;
     console.log('Min collateral: %s', minCollateral);
     
@@ -577,19 +577,16 @@ contract OptionPerp is Ownable {
   // Calculate funding for opening a position until expiry
   function _calculateFunding(
     uint _size, // in USD (1e8)
-    uint _collateralAmount // in collateral used to write option. long = usd, short = eth
+    uint _collateralAmount // (ie6) in collateral used to write option. long = usd, short = eth
   ) 
   internal 
   returns (uint funding) {
-    // ((Borrowed * funding rate)/(36500 * divisor);
-    uint _borrowed = 
-      _size - (_collateralAmount * divisor / 10 ** quote.decimals());
-    funding = 
-      (_borrowed * fundingRate) / 
-      (36500 * divisor * (divisor / 10 ** quote.decimals()));
-    funding = 
-      (funding * (epochData[currentEpoch].expiry - block.timestamp)) /
-      365 days;
+    if (_collateralAmount > _size / 10 ** 2) {
+      funding = 0;
+    } else {
+      uint _borrowed = _size / 10 ** 2 - _collateralAmount;
+      funding = ((_borrowed * fundingRate / (divisor * 100)) * (epochData[currentEpoch].expiry - block.timestamp)) / 365 days;
+    }
   }
 
   // Calculate fees for opening a perp position
@@ -599,9 +596,7 @@ contract OptionPerp is Ownable {
   ) 
   internal 
   returns (uint fees) {
-    fees = (_size * (_openingPosition ? fee_openPosition : fee_closePosition)) / (100 * divisor);
-    fees = 
-      fees / (divisor / 10 ** quote.decimals());
+    fees = ((_size / 10 ** 2) * (_openingPosition ? fee_openPosition : fee_closePosition)) / (100 * divisor);
   }
 
   // Returns price of base asset from oracle
@@ -641,25 +636,21 @@ contract OptionPerp is Ownable {
   public
   view
   returns (uint value) {
-    value = perpPositions[id].positions * _getMarkPrice();
+    uint markPrice = _getMarkPrice();
+
+    // WIP: FIXING THIS
+    value = (perpPositions[id].size / 10 ** 2) * (_getMarkPrice() / divisor);
   }
 
   // Checks whether a position is sufficiently collateralized
   function _isPositionCollateralized(uint id)
   public
   returns (bool isCollateralized) {
-    console.log((
-        (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) *
-        divisor/quote.decimals()
-      ));
+    console.log('DATAS');
+    console.log((perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees));
     console.log(_getPositionValue(id));
 
-    isCollateralized = 
-      (
-        (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) *
-        divisor/quote.decimals()
-      ) >= 
-      _getPositionValue(id);
+    isCollateralized = (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) >= _getPositionValue(id);
   }
 
   // Close an existing position
