@@ -631,26 +631,36 @@ contract OptionPerp is Ownable {
     );
   }
 
-  // Get value of an open perp position
+  // Get value of an open perp position (1e6)
   function _getPositionValue(uint id) 
   public
   view
   returns (uint value) {
-    uint markPrice = _getMarkPrice();
+    value = perpPositions[id].positions * _getMarkPrice() / (divisor * 100);
+  }
 
-    // WIP: FIXING THIS
-    value = (perpPositions[id].size / 10 ** 2) * (_getMarkPrice() / divisor);
+  // Get Pnl of an open perp position (1e6)
+  function _getPositionPnl(uint id)
+  public
+  view
+  returns (int value) {
+    uint positionValue = _getPositionValue(id);
+    value = perpPositions[id].isShort ?
+      (int)(perpPositions[id].size - positionValue) :
+      (int)(positionValue - perpPositions[id].size);
   }
 
   // Checks whether a position is sufficiently collateralized
   function _isPositionCollateralized(uint id)
   public
   returns (bool isCollateralized) {
-    console.log('DATAS');
-    console.log((perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees));
-    console.log(_getPositionValue(id));
-
-    isCollateralized = (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) >= _getPositionValue(id);
+    if (perpPositions[id].isShort) {
+      int pnl = _getPositionPnl(id);
+      if (pnl > 0) isCollateralized = true;
+      else isCollateralized = (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) >= uint(pnl);
+    } else {
+      isCollateralized = (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) >= _getPositionValue(id);
+    }
   }
 
   // Close an existing position
@@ -667,11 +677,8 @@ contract OptionPerp is Ownable {
     // Position must be sufficiently collateralized
     require(_isPositionCollateralized(id), "Position is not collateralized");
 
-    uint positionValue = _getPositionValue(id);
     // Calculate pnl
-    int pnl = perpPositions[id].isShort ? 
-      (int)(perpPositions[id].size - positionValue) :
-      (int)(positionValue - perpPositions[id].size);
+    int pnl = _getPositionPnl(id);
     // Settle option positions
     bool isShort = perpPositions[id].isShort;
     
