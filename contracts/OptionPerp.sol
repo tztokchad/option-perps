@@ -83,11 +83,12 @@ contract OptionPerp is Ownable {
 
   mapping (uint => EpochData) public epochData;
 
-  uint public divisor           = 1e8;
-  uint public fundingRate       = 3650000000; // 36.5% annualized (0.1% a day)
-  uint public fee_openPosition  = 5000000; // 0.05%
-  uint public fee_closePosition = 5000000; // 0.05%
-  uint public fee_liquidation   = 50000000; // 0.5%
+  uint public divisor                = 1e8;
+  uint public fundingRate            = 3650000000; // 36.5% annualized (0.1% a day)
+  uint public feeOpenPosition        = 5000000; // 0.05%
+  uint public feeClosePosition       = 5000000; // 0.05%
+  uint public feeLiquidation         = 50000000; // 0.5%
+  uint public liquidationThreshold   = 500000000; // 5%
 
   uint256 internal constant POSITION_PRECISION = 1e8;
   uint256 internal constant OPTIONS_PRECISION = 1e18;
@@ -596,7 +597,7 @@ contract OptionPerp is Ownable {
   ) 
   internal 
   returns (uint fees) {
-    fees = ((_size / 10 ** 2) * (_openingPosition ? fee_openPosition : fee_closePosition)) / (100 * divisor);
+    fees = ((_size / 10 ** 2) * (_openingPosition ? feeOpenPosition : feeClosePosition)) / (100 * divisor);
   }
 
   // Returns price of base asset from oracle
@@ -739,7 +740,7 @@ contract OptionPerp is Ownable {
     require(!_isPositionCollateralized(id), "Position has enough collateral");
 
     bool isShort = perpPositions[id].isShort;
-    uint liquidationFee = perpPositions[id].margin * fee_liquidation / divisor;
+    uint liquidationFee = perpPositions[id].margin * feeLiquidation / divisor;
     
     epochLpData[currentEpoch][isShort].margin -= perpPositions[id].margin;
     epochLpData[currentEpoch][isShort].activeDeposits -= perpPositions[id].size;
