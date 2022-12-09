@@ -693,9 +693,12 @@ contract OptionPerp is Ownable {
   public
   returns (bool isCollateralized) {
     int pnl = _getPositionPnl(id);
-
     if (pnl > 0) isCollateralized = true;
-    else isCollateralized = _getPositionNetMargin(id) + pnl >= 0;
+    else {
+      int netMargin = _getPositionNetMargin(id);
+      netMargin -= netMargin * liquidationThreshold / (divisor * 100);
+      isCollateralized = netMargin + pnl >= 0;
+    }
   }
 
   // Close an existing position
