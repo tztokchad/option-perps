@@ -166,6 +166,8 @@ contract OptionPerp is Ownable {
     int pnl;
     // Owner of perp position
     address owner;
+    // Opened at timestamp
+    uint openedAt;
   }
 
   struct LPPosition {
@@ -489,8 +491,6 @@ contract OptionPerp is Ownable {
 
     // Calculate funding in USD
     int funding = _calculateFunding(_size, _collateralAmount);
-    console.log('Funding');
-    console.logInt(funding);
 
     // Calculate opening fees in USD
     int openingFees = _calculateFees(true, _size / 10 ** 2);
@@ -522,7 +522,6 @@ contract OptionPerp is Ownable {
     epochLpData[currentEpoch][_isShort].margin            += _collateralAmount;
     epochLpData[currentEpoch][_isShort].oi                += _size;
     epochLpData[currentEpoch][_isShort].premium           += premium;
-    epochLpData[currentEpoch][_isShort].funding           += funding;
     epochLpData[currentEpoch][_isShort].openingFees       += openingFees;
     epochLpData[currentEpoch][_isShort].activeDeposits    += _size;
     epochLpData[currentEpoch][_isShort].positions         += positions;
@@ -557,9 +556,10 @@ contract OptionPerp is Ownable {
       premium: premium,
       openingFees: openingFees,
       closingFees: 0,
-      funding: funding,
+      funding: 0,
       pnl: 0,
-      owner: msg.sender
+      owner: msg.sender,
+      openedAt: block.timestamp
     });
 
     // Emit open perp position event
@@ -667,6 +667,15 @@ contract OptionPerp is Ownable {
     value = perpPositions[id].positions * _getMarkPrice() / (divisor * 100);
   }
 
+  // Get funding of an open perp position (1e6)
+  function _getPositionFunding(uint id)
+  public
+  view
+  returns (int funding) {
+    int _borrowed = perpPositions[id].size / 10 ** 2 - perpPositions[id].margin;
+    funding = ((_borrowed * fundingRate / (divisor * 100)) * int(block.timestamp - perpPositions[id].openedAt)) / 365 days;
+  }
+
   // Get Pnl of an open perp position (1e6)
   function _getPositionPnl(uint id)
   public
@@ -685,7 +694,7 @@ contract OptionPerp is Ownable {
   view
   returns (int value) {
     int closingFees = _calculateFees(false, ((perpPositions[id].size / 10 ** 2) + _getPositionPnl(id)));
-    value = perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].openingFees - closingFees;
+    value = perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].openingFees - closingFees - _getPositionFunding(id);
   }
 
   // Checks whether a position is sufficiently collateralized
