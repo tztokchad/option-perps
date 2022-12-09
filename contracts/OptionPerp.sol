@@ -16,7 +16,7 @@ import {IGmxRouter} from "./interface/IGmxRouter.sol";
 
 import "hardhat/console.sol";
 
-// On LP deposit: 
+// On LP deposit:
 // - select ETH or USDC, adds to LP for current epoch
 
 // User opens long:
@@ -56,7 +56,7 @@ import "hardhat/console.sol";
 // - Max leverage for opening long/short = mark price/((atm premium * 2) + fees + funding until expiry)
 //   Max leverage: 1000 / ((90 * 2) + (90 * 0.25 * 0.01) + (1000 * 0.03))
 // - Margin for opening long/short = (atm premium * max leverage / target leverage) + fees + funding until expiry
-// - On closing, If pnl is +ve, payoff is removed from eth LP if long, USD lp if short. 
+// - On closing, If pnl is +ve, payoff is removed from eth LP if long, USD lp if short.
 // - If pnl is -ve, OTM option is returned to pool + premium
 // - Liquidation price = opening price - (margin / delta)
 
@@ -83,37 +83,39 @@ contract OptionPerp is Ownable {
 
   mapping (uint => EpochData) public epochData;
 
-  uint public divisor                = 1e8;
-  uint public fundingRate            = 3650000000; // 36.5% annualized (0.1% a day)
-  uint public feeOpenPosition        = 5000000; // 0.05%
-  uint public feeClosePosition       = 5000000; // 0.05%
-  uint public feeLiquidation         = 50000000; // 0.5%
-  uint public liquidationThreshold   = 500000000; // 5%
+  int public divisor                = 1e8;
+  int public fundingRate            = 3650000000; // 36.5% annualized (0.1% a day)
+  int public feeOpenPosition        = 5000000; // 0.05%
+  int public feeClosePosition       = 5000000; // 0.05%
+  int public feeLiquidation         = 50000000; // 0.5%
+  int public liquidationThreshold   = 500000000; // 5%
 
-  uint256 internal constant POSITION_PRECISION = 1e8;
-  uint256 internal constant OPTIONS_PRECISION = 1e18;
+  uint internal constant POSITION_PRECISION = 1e8;
+  uint internal constant OPTIONS_PRECISION = 1e18;
 
   struct EpochLPData {
     // Starting asset deposits
-    uint startingDeposits;
+    int startingDeposits;
     // Total asset deposits
     int totalDeposits;
     // Active deposits for option writes
-    uint activeDeposits;
+    int activeDeposits;
     // Average price of all positions taken by LP
-    uint averageOpenPrice;
+    int averageOpenPrice;
     // Open position count (in base asset)
-    uint positions;
+    int positions;
     // Margin deposited for write positions by users selling into LP
-    uint margin;
+    int margin;
     // Premium collected for option purchases from the pool
-    uint premium;
-    // Fees collected from positions
-    uint fees;
+    int premium;
+    // Opening fees collected from positions
+    int openingFees;
+    // Closing fees collected from positions
+    int closingFees;
     // Funding collected from positions
-    uint funding;
+    int funding;
     // Total open interest (in asset)
-    uint oi;
+    int oi;
     // // Total long delta
     // int longDelta;
     // // Total short delta
@@ -121,20 +123,20 @@ contract OptionPerp is Ownable {
     // End of epoch PNL
     int pnl;
     // Queued withdrawals
-    uint withdrawalQueue;
+    int withdrawalQueue;
     // Amount withdrawn
-    uint withdrawn;
+    int withdrawn;
   }
 
   struct EpochData {
     // Epoch expiry
-    uint expiry;
+    int expiry;
     // Average open price
-    uint averageOpenPrice;
+    int averageOpenPrice;
     // Open Interest
-    uint oi;
+    int oi;
     // Price at expiry
-    uint expiryPrice;
+    int expiryPrice;
   }
 
   struct PerpPosition {
@@ -145,19 +147,21 @@ contract OptionPerp is Ownable {
     // Epoch
     uint epoch;
     // Open position count (in base asset)
-    uint positions;
+    int positions;
     // Total size in asset
-    uint size;
+    int size;
     // Average open price
-    uint averageOpenPrice;
+    int averageOpenPrice;
     // Margin provided
-    uint margin;
+    int margin;
     // Premium for position
-    uint premium;
-    // Fees for position
-    uint fees;
+    int premium;
+    // Fees for opening position
+    int openingFees;
+    // Fees for closing position
+    int closingFees;
     // Funding for position
-    uint funding;
+    int funding;
     // Final PNL of position
     int pnl;
     // Owner of perp position
@@ -168,7 +172,7 @@ contract OptionPerp is Ownable {
     // Is quote asset
     bool isQuote;
     // Amount of asset
-    uint amount;
+    int amount;
     // Epoch
     uint epoch;
     // Is position set for withdraw. False if it's to be rolled over
@@ -183,7 +187,7 @@ contract OptionPerp is Ownable {
 
   event Deposit(
     bool isQuote,
-    uint amount,
+    int amount,
     uint epoch,
     address indexed user,
     uint indexed id
@@ -191,30 +195,30 @@ contract OptionPerp is Ownable {
 
   event OpenPerpPosition(
     bool isShort,
-    uint size,
-    uint collateralAmount,
+    int size,
+    int collateralAmount,
     address indexed user,
     uint indexed id
   );
 
   event AddCollateralToPosition(
     uint indexed id,
-    uint amount,
+    int amount,
     address indexed sender
   );
 
   event ClosePerpPosition(
     uint indexed id,
-    uint size,
+    int size,
     int pnl,
     address indexed user
   );
 
   event LiquidatePosition(
     uint indexed id,
-    uint margin,
-    uint price,
-    uint liquidationFee,
+    int margin,
+    int price,
+    int liquidationFee,
     address indexed liquidator
   );
 
@@ -225,18 +229,18 @@ contract OptionPerp is Ownable {
 
   event Withdraw(
     uint id,
-    uint finalSettleAmount,
+    int finalSettleAmount,
     address indexed user
   );
 
   event ExpireEpoch(
     uint epoch,
-    uint expiryPrice
+    int expiryPrice
   );
 
   event Bootstrap(
     uint epoch,
-    uint expiryTimestamp
+    int expiryTimestamp
   );
 
   constructor(
@@ -271,18 +275,18 @@ contract OptionPerp is Ownable {
     uint amount
   ) external {
     uint nextEpoch = currentEpoch + 1;
-    epochLpData[nextEpoch][isQuote].totalDeposits += (int)(amount);
+    epochLpData[nextEpoch][isQuote].totalDeposits += int(amount);
 
-    if (isQuote) 
+    if (isQuote)
       quote.transferFrom(msg.sender, address(this), amount);
     else
       base.transferFrom(msg.sender, address(this), amount);
-    
+
     uint id = lpPositionMinter.mint(msg.sender);
 
     lpPositions[id] = LPPosition({
       isQuote: isQuote,
-      amount: amount,
+      amount: int(amount),
       epoch: nextEpoch,
       toWithdraw: false,
       toWithdrawEpoch: 0,
@@ -291,7 +295,7 @@ contract OptionPerp is Ownable {
     });
     emit Deposit(
       isQuote,
-      amount,
+      int(amount),
       nextEpoch,
       msg.sender,
       id
@@ -301,9 +305,9 @@ contract OptionPerp is Ownable {
   // Inititate a withdrawal for end of epoch
   function initWithdraw(
     bool isQuote,
-    uint amount,
+    int amount,
     uint id
-  ) external 
+  ) external
   {
     require(IERC721(lpPositionMinter).ownerOf(id) == msg.sender, "Invalid owner");
     require(!lpPositions[id].toWithdraw, "Already set for withdraw");
@@ -311,8 +315,8 @@ contract OptionPerp is Ownable {
 
     lpPositions[id].toWithdraw = true;
 
-    epochLpData[currentEpoch + 1][isQuote].withdrawalQueue += amount; 
-    
+    epochLpData[currentEpoch + 1][isQuote].withdrawalQueue += amount;
+
     emit InitWithdraw(
       id,
       msg.sender
@@ -322,21 +326,22 @@ contract OptionPerp is Ownable {
   // Withdraw from epoch
   function withdraw(
     uint id
-  ) external 
+  ) external
   {
     require(IERC721(lpPositionMinter).ownerOf(id) == msg.sender, "Invalid owner");
     require(lpPositions[id].toWithdraw, "Position not set for withdraw");
     require(!lpPositions[id].hasWithdrawn, "Already withdrawn");
 
     require(
-      lpPositions[id].toWithdrawEpoch < currentEpoch, 
+      lpPositions[id].toWithdrawEpoch < currentEpoch,
       "To withdraw epoch must be prior to current epoch"
     );
 
     // Calculate LP pnl, transfer out and burn
-    uint finalLpAmountToWithdraw = _calcFinalLpAmount(id);
+    int finalLpAmountToWithdraw = _calcFinalLpAmount(id);
+    require(finalLpAmountToWithdraw > 0);
 
-    IERC20(lpPositions[id].isQuote ? quote : base).transfer(msg.sender, finalLpAmountToWithdraw);
+    IERC20(lpPositions[id].isQuote ? quote : base).transfer(msg.sender, uint(finalLpAmountToWithdraw));
 
     // Update epoch LP data
     epochLpData[lpPositions[id].toWithdrawEpoch][lpPositions[id].isQuote].withdrawn += finalLpAmountToWithdraw;
@@ -348,44 +353,53 @@ contract OptionPerp is Ownable {
     );
   }
 
-  // Calculates final LP amount for a LP position after accounting for PNL in an epoch
-  function _calcFinalLpAmount(uint id) 
+  // Safe convert to uint without overflow
+  function _safeConvertToUint(int amountIn)
   private
   view
-  returns (uint finalLpAmount) 
+  returns (uint amountOut) {
+    require(amountIn >= 0, "Overflow");
+    amountOut = uint(amountIn);
+  }
+
+  // Calculates final LP amount for a LP position after accounting for PNL in an epoch
+  function _calcFinalLpAmount(uint id)
+  private
+  view
+  returns (int finalLpAmount)
   {
-    // LP PNL for an epoch = 
+    // LP PNL for an epoch =
     bool isQuote = lpPositions[id].isQuote;
     uint epoch = lpPositions[id].toWithdrawEpoch;
-    uint amount = lpPositions[id].amount;
+    int amount = lpPositions[id].amount;
     int totalDeposits = epochLpData[epoch][isQuote].totalDeposits;
-    uint startingDeposits = epochLpData[epoch][isQuote].startingDeposits;
+    int startingDeposits = epochLpData[epoch][isQuote].startingDeposits;
 
     require(startingDeposits > 0, "Invalid final lp amount");
 
-    finalLpAmount = amount * (uint)(totalDeposits) / startingDeposits;
+    finalLpAmount = amount * totalDeposits / startingDeposits;
   }
 
   // Expires an epoch and bootstraps the next epoch
   function expireAndBootstrap(
-    uint nextExpiryTimestamp
-  ) 
+    int nextExpiryTimestamp
+  )
   external
   onlyOwner {
     uint nextEpoch = currentEpoch + 1;
     epochData[nextEpoch].expiry = nextExpiryTimestamp;
     if (currentEpoch > 0) {
       require(
-        epochData[currentEpoch].expiry < block.timestamp, 
+        epochData[currentEpoch].expiry < int(block.timestamp),
         "Cannot bootstrap before the current epoch was expired"
       );
       require(
-        nextExpiryTimestamp > epochData[currentEpoch].expiry, 
+        nextExpiryTimestamp > epochData[currentEpoch].expiry,
         "Invalid next expiry timestamp"
       );
 
       // Get expiry price
-      uint expiryPrice; // = _getCurrentPrice();
+      int expiryPrice = _getMarkPrice();
       epochData[currentEpoch].expiryPrice = expiryPrice;
 
       // long: long call, short put
@@ -396,40 +410,38 @@ contract OptionPerp is Ownable {
       // Calculate short LP payout from OI in quote asset for remaining positions
       // If expiry price > average open price, put writers have to pay out nothing
       // else, put writers payout = (avg. open price - exp) * oi/avg. open price
-      // for example, exp: 500, avgOpen: 1000, oi: 1000 
+      // for example, exp: 500, avgOpen: 1000, oi: 1000
       // (1000 - 500) * 1000/500
-      uint quoteLpPayout = 
-        expiryPrice > epochLpData[currentEpoch][true].averageOpenPrice ? 0 :
-          (epochLpData[currentEpoch][true].averageOpenPrice - expiryPrice) *
-          epochLpData[currentEpoch][true].oi / epochLpData[currentEpoch][true].averageOpenPrice;
+      int quoteLpPayout;
+      int baseLpPayout;
+
+      if (expiryPrice > epochLpData[currentEpoch][true].averageOpenPrice) {
+        quoteLpPayout = (epochLpData[currentEpoch][true].averageOpenPrice - expiryPrice) * epochLpData[currentEpoch][true].oi / epochLpData[currentEpoch][true].averageOpenPrice;
+      }
 
       // Calculate long LP payout from OI in base asset for remaining positions
-      uint baseLpPayout = 
-        epochLpData[currentEpoch][false].averageOpenPrice > expiryPrice ? 0 :
-          (expiryPrice - epochLpData[currentEpoch][false].averageOpenPrice) /
-            expiryPrice;
-        // exp: 1500, avgOpen: 1000, oi: 1000, (1500 - 1000) * 1500
+      if (epochLpData[currentEpoch][false].averageOpenPrice > expiryPrice) {
+        baseLpPayout = (expiryPrice - epochLpData[currentEpoch][false].averageOpenPrice) / expiryPrice;
+      }
 
-      epochLpData[currentEpoch][true].pnl  -= (int)(baseLpPayout);
-      epochLpData[currentEpoch][false].pnl -= (int)(quoteLpPayout);
+      // exp: 1500, avgOpen: 1000, oi: 1000, (1500 - 1000) * 1500
 
-      epochLpData[currentEpoch][true].totalDeposits  -= (int)(baseLpPayout);
-      epochLpData[currentEpoch][false].totalDeposits -= (int)(quoteLpPayout);
+      epochLpData[currentEpoch][true].pnl  -= baseLpPayout;
+      epochLpData[currentEpoch][false].pnl -= quoteLpPayout;
 
-      uint nextEpochStartingDeposits = 
-        (uint)(
-          epochLpData[currentEpoch][true].totalDeposits - 
-          (
-            (int)(epochLpData[currentEpoch][true].withdrawalQueue) * 
-            epochLpData[currentEpoch][true].totalDeposits / 
-            (int)(epochLpData[currentEpoch][true].startingDeposits)
-          )
-        );
+      epochLpData[currentEpoch][true].totalDeposits  -= baseLpPayout;
+      epochLpData[currentEpoch][false].totalDeposits -= quoteLpPayout;
 
-      epochLpData[currentEpoch + 1][true].totalDeposits   += (int)(nextEpochStartingDeposits);
+      int nextEpochStartingDeposits = epochLpData[currentEpoch][true].totalDeposits -
+      ( epochLpData[currentEpoch][true].withdrawalQueue *
+        epochLpData[currentEpoch][true].totalDeposits /
+        epochLpData[currentEpoch][true].startingDeposits
+      );
+
+      epochLpData[currentEpoch + 1][true].totalDeposits   += nextEpochStartingDeposits;
       epochLpData[currentEpoch + 1][true].startingDeposits = nextEpochStartingDeposits;
 
-      epochLpData[currentEpoch + 1][false].totalDeposits   += (int)(nextEpochStartingDeposits);
+      epochLpData[currentEpoch + 1][false].totalDeposits   += nextEpochStartingDeposits;
       epochLpData[currentEpoch + 1][false].startingDeposits = nextEpochStartingDeposits;
 
       emit ExpireEpoch(
@@ -451,40 +463,50 @@ contract OptionPerp is Ownable {
   // Short - long put, short call.
   function openPosition(
     bool _isShort,
-    uint _size, // in USD (1e8)
-    uint _collateralAmount // in USD (1e6) collateral used to cover premium + funding + fees and write option
+    int _size, // in USD (1e8)
+    int _collateralAmount // in USD (1e6) collateral used to cover premium + funding + fees and write option
   ) external returns (uint id) {
     // Must not be epoch 0
     require(currentEpoch > 0, "Invalid epoch");
     // Check for expiry
-    require(epochData[currentEpoch].expiry > block.timestamp, "Time must be before expiry");
-    uint _sizeInBase = _size * (10 ** base.decimals()) / _getMarkPrice();
-    console.log('size in base: %s', _sizeInBase);
+    require(epochData[currentEpoch].expiry > int(block.timestamp), "Time must be before expiry");
+    int _sizeInBase = _size * int(10 ** base.decimals()) / _getMarkPrice();
+    console.log('Size in base');
+    console.logInt(_sizeInBase);
     // Check if enough liquidity is available to open position
     require(
-      (epochLpData[currentEpoch][_isShort].totalDeposits - 
-      (int)(epochLpData[currentEpoch][_isShort].activeDeposits)) >= 
-      (_isShort ? (int)(_size) : (int)(_sizeInBase)),
-      "Not enough liquidity to open position" 
+      (epochLpData[currentEpoch][_isShort].totalDeposits -
+      epochLpData[currentEpoch][_isShort].activeDeposits) >=
+      (_isShort ? _size : _sizeInBase),
+      "Not enough liquidity to open position"
     );
 
     // Calculate premium for ATM option in USD
     // If is short, premium is in quote.decimals(). if long, base.decimals();
-    uint premium = _calculatePremium(_getMarkPrice(), _size);
-    console.log('Premium: %s', premium);
+    int premium = _calculatePremium(_getMarkPrice(), _size);
+    console.log('Premium');
+    console.logInt(premium);
 
     // Calculate funding in USD
-    uint funding = _calculateFunding(_size, _collateralAmount);
-    console.log('Funding: %s', funding);
+    int funding = _calculateFunding(_size, _collateralAmount);
+    console.log('Funding');
+    console.logInt(funding);
 
-    // Calculate fees in USD
-    uint fees = _calculateFees(true, _size);
-    console.log('Fees: %s', fees);
+    // Calculate opening fees in USD
+    int openingFees = _calculateFees(true, _size / 10 ** 2);
+    console.log('Opening fees');
+    console.logInt(openingFees);
+
+    // Calculate closing fees in USD
+    int closingFees = _calculateFees(false, _size / 10 ** 2);
+    console.log('Closing fees');
+    console.logInt(closingFees);
 
     // Calculate minimum collateral in USD
-    uint minCollateral = (premium * 2) + fees + funding;
-    console.log('Min collateral: %s', minCollateral);
-    
+    int minCollateral = (premium * 2) + openingFees + closingFees + funding;
+    console.log('Min collateral');
+    console.logInt(minCollateral);
+
     // Check if collateral amount is sufficient for short side of trade and long premium
     require(
       _collateralAmount >= minCollateral,
@@ -492,33 +514,34 @@ contract OptionPerp is Ownable {
     );
 
     // Number of positions (in 8 decimals)
-    uint positions = _size * divisor / _getMarkPrice();
-    console.log('Positions: %s', positions);
+    int positions = _size * divisor / _getMarkPrice();
+    console.log('Positions');
+    console.logInt(positions);
 
     // Update epoch LP data
     epochLpData[currentEpoch][_isShort].margin            += _collateralAmount;
     epochLpData[currentEpoch][_isShort].oi                += _size;
     epochLpData[currentEpoch][_isShort].premium           += premium;
     epochLpData[currentEpoch][_isShort].funding           += funding;
-    epochLpData[currentEpoch][_isShort].fees              += fees;
+    epochLpData[currentEpoch][_isShort].openingFees       += openingFees;
     epochLpData[currentEpoch][_isShort].activeDeposits    += _size;
     epochLpData[currentEpoch][_isShort].positions         += positions;
 
     // epochLpData[currentEpoch][_isShort].longDelta   += (int)(size);
     // epochLpData[currentEpoch][!_isShort].shortDelta += (int)(size);
 
-    if (epochLpData[currentEpoch][_isShort].averageOpenPrice == 0) 
+    if (epochLpData[currentEpoch][_isShort].averageOpenPrice == 0)
       epochLpData[currentEpoch][_isShort].averageOpenPrice  = _getMarkPrice();
     else
-      epochLpData[currentEpoch][_isShort].averageOpenPrice  = 
-        epochLpData[currentEpoch][_isShort].oi / 
+      epochLpData[currentEpoch][_isShort].averageOpenPrice  =
+        epochLpData[currentEpoch][_isShort].oi /
         epochLpData[currentEpoch][_isShort].positions;
 
     // Transfer collateral from user
     quote.transferFrom(
-        msg.sender, 
-        address(this), 
-        _collateralAmount
+        msg.sender,
+        address(this),
+        _safeConvertToUint(_collateralAmount)
       );
 
     // Generate perp position NFT
@@ -532,7 +555,8 @@ contract OptionPerp is Ownable {
       averageOpenPrice: _getMarkPrice(),
       margin: _collateralAmount,
       premium: premium,
-      fees: fees,
+      openingFees: openingFees,
+      closingFees: 0,
       funding: funding,
       pnl: 0,
       owner: msg.sender
@@ -550,70 +574,71 @@ contract OptionPerp is Ownable {
 
   // Calculate premium for longing an ATM option
   function _calculatePremium(
-    uint _strike,
-    uint _size
-  ) 
-  internal 
-  returns (uint premium) {
-    premium = (optionPricing.getOptionPrice(
+    int _strike,
+    int _size
+  )
+  internal
+  returns (int premium) {
+    premium = (int(optionPricing.getOptionPrice(
         false, // ATM options: does not matter if call or put
-        epochData[currentEpoch].expiry,
-        _strike,
-        _strike,
-        getVolatility(_strike)
-    ) * (_size / _strike));
+        _safeConvertToUint(epochData[currentEpoch].expiry),
+        _safeConvertToUint(_strike),
+        _safeConvertToUint(_strike),
+        _safeConvertToUint(getVolatility(_strike))
+    )) * (_size / _strike));
     premium =
-      premium / (divisor / 10 ** quote.decimals());
+      premium / (divisor / int(10 ** quote.decimals()));
   }
 
   // Returns the volatility from the volatility oracle
-  function getVolatility(uint256 _strike) 
-  public 
-  view 
-  returns (uint256 volatility) {
-    volatility = 
-      volatilityOracle.getVolatility(
-        _strike
-      );
+  function getVolatility(int _strike)
+  public
+  view
+  returns (int volatility) {
+    volatility =
+      int(volatilityOracle.getVolatility(
+        uint(_strike)
+      ));
   }
 
   // Calculate funding for opening a position until expiry
   function _calculateFunding(
-    uint _size, // in USD (1e8)
-    uint _collateralAmount // (ie6) in collateral used to write option. long = usd, short = eth
-  ) 
-  internal 
-  returns (uint funding) {
+    int _size, // in USD (1e8)
+    int _collateralAmount // (ie6) in collateral used to write option. long = usd, short = eth
+  )
+  internal
+  returns (int funding) {
     if (_collateralAmount > _size / 10 ** 2) {
       funding = 0;
     } else {
-      uint _borrowed = _size / 10 ** 2 - _collateralAmount;
-      funding = ((_borrowed * fundingRate / (divisor * 100)) * (epochData[currentEpoch].expiry - block.timestamp)) / 365 days;
+      int _borrowed = _size / 10 ** 2 - _collateralAmount;
+      funding = ((_borrowed * fundingRate / (divisor * 100)) * (epochData[currentEpoch].expiry - int(block.timestamp))) / 365 days;
     }
   }
 
   // Calculate fees for opening a perp position
   function _calculateFees(
     bool _openingPosition,
-    uint _size
-  ) 
-  internal 
-  returns (uint fees) {
-    fees = ((_size / 10 ** 2) * (_openingPosition ? feeOpenPosition : feeClosePosition)) / (100 * divisor);
+    int _amount
+  )
+  internal
+  view
+  returns (int fees) {
+    fees = (_amount * (_openingPosition ? feeOpenPosition : feeClosePosition)) / (100 * divisor);
   }
 
   // Returns price of base asset from oracle
   function _getMarkPrice()
   public
   view
-  returns (uint price) {
-    return priceOracle.getUnderlyingPrice();
+  returns (int price) {
+    price = int(priceOracle.getUnderlyingPrice());
   }
 
   // Add collateral to an existing position
   function addCollateral(
     uint id,
-    uint collateralAmount
+    int collateralAmount
   ) external {
     // Check if position is open
     require(perpPositions[id].isOpen, "Position not open");
@@ -623,9 +648,9 @@ contract OptionPerp is Ownable {
     perpPositions[id].margin += collateralAmount;
     // Move collateral
     IERC20(quote).transferFrom(
-      msg.sender, 
-      address(this), 
-      collateralAmount
+      msg.sender,
+      address(this),
+      uint(collateralAmount)
     );
     emit AddCollateralToPosition(
       id,
@@ -635,10 +660,10 @@ contract OptionPerp is Ownable {
   }
 
   // Get value of an open perp position (1e6)
-  function _getPositionValue(uint id) 
+  function _getPositionValue(uint id)
   public
   view
-  returns (uint value) {
+  returns (int value) {
     value = perpPositions[id].positions * _getMarkPrice() / (divisor * 100);
   }
 
@@ -647,11 +672,11 @@ contract OptionPerp is Ownable {
   public
   view
   returns (int value) {
-    uint positionValue = _getPositionValue(id);
+    int positionValue = _getPositionValue(id);
 
     value = perpPositions[id].isShort ?
-      (int(perpPositions[id].size / 10 ** 2) - int(positionValue)) :
-      (int(positionValue) - int(perpPositions[id].size / 10 ** 2));
+      (perpPositions[id].size / 10 ** 2) - positionValue :
+      positionValue - (perpPositions[id].size / 10 ** 2);
   }
 
   // Get net margin of an open perp position (1e6)
@@ -659,9 +684,8 @@ contract OptionPerp is Ownable {
   public
   view
   returns (int value) {
-    // TODO: handle closing fee
-    // TODO: handle funding
-    value = int(perpPositions[id].margin) - int(perpPositions[id].premium) - int(perpPositions[id].fees);
+    int closingFees = _calculateFees(false, ((perpPositions[id].size / 10 ** 2) + _getPositionPnl(id)));
+    value = perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].openingFees - closingFees;
   }
 
   // Checks whether a position is sufficiently collateralized
@@ -692,15 +716,15 @@ contract OptionPerp is Ownable {
     int pnl = _getPositionPnl(id);
     // Settle option positions
     bool isShort = perpPositions[id].isShort;
-    
+
     epochLpData[currentEpoch][isShort].margin -= perpPositions[id].margin;
     epochLpData[currentEpoch][isShort].activeDeposits -= perpPositions[id].size;
-    epochLpData[currentEpoch][isShort].totalDeposits += (int)(perpPositions[id].size) - pnl;
+    epochLpData[currentEpoch][isShort].totalDeposits += perpPositions[id].size - pnl;
     epochLpData[currentEpoch][isShort].pnl -= pnl;
     epochLpData[currentEpoch][isShort].oi -= perpPositions[id].size;
 
-    epochLpData[currentEpoch][isShort].averageOpenPrice  = 
-      epochLpData[currentEpoch][isShort].oi / 
+    epochLpData[currentEpoch][isShort].averageOpenPrice  =
+      epochLpData[currentEpoch][isShort].oi /
       epochLpData[currentEpoch][isShort].positions;
 
     epochLpData[currentEpoch][isShort].positions -= perpPositions[id].positions;
@@ -715,11 +739,11 @@ contract OptionPerp is Ownable {
 
     // Transfer collateral + PNL to user
     if (perpPositions[id].isShort) {
-      amountOut = uint((int)(perpPositions[id].margin) + pnl);
+      amountOut = uint(perpPositions[id].margin + pnl);
       require(amountOut >= minAmountOut, "Amount out is not enough");
     } else {
       // Convert collateral + PNL to quote and send to user
-      uint amountIn = uint((int)(perpPositions[id].margin) + pnl);
+      int amountIn = perpPositions[id].margin + pnl;
       address[] memory path;
 
       path = new address[](2);
@@ -727,7 +751,7 @@ contract OptionPerp is Ownable {
       path[1] = address(quote);
 
       uint initialAmountOut = quote.balanceOf(address(this));
-      gmxRouter.swap(path, amountIn, minAmountOut, address(this));
+      gmxRouter.swap(path, uint(amountIn), minAmountOut, address(this));
       amountOut = quote.balanceOf(address(this)) - initialAmountOut;
     }
 
@@ -753,30 +777,29 @@ contract OptionPerp is Ownable {
     require(!_isPositionCollateralized(id), "Position has enough collateral");
 
     bool isShort = perpPositions[id].isShort;
-    uint liquidationFee = perpPositions[id].margin * feeLiquidation / divisor;
-    
+    int liquidationFee = perpPositions[id].margin * feeLiquidation / divisor;
+
     epochLpData[currentEpoch][isShort].margin -= perpPositions[id].margin;
     epochLpData[currentEpoch][isShort].activeDeposits -= perpPositions[id].size;
-    epochLpData[currentEpoch][isShort].totalDeposits += 
-      (int)(perpPositions[id].size + perpPositions[id].margin - liquidationFee);
+    epochLpData[currentEpoch][isShort].totalDeposits += perpPositions[id].size + perpPositions[id].margin - liquidationFee;
     epochLpData[currentEpoch][isShort].oi -= perpPositions[id].size;
     epochLpData[currentEpoch][isShort].positions -= perpPositions[id].positions;
 
-    epochLpData[currentEpoch][isShort].averageOpenPrice  = 
-      epochLpData[currentEpoch][isShort].oi / 
+    epochLpData[currentEpoch][isShort].averageOpenPrice  =
+      epochLpData[currentEpoch][isShort].oi /
       epochLpData[currentEpoch][isShort].positions;
 
     // epochLpData[currentEpoch][isShort].longDelta -= (int)(perpPositions[id].size);
     // epochLpData[currentEpoch][!isShort].shortDelta -= (int)(perpPositions[id].size);
 
     perpPositions[id].isOpen = false;
-    perpPositions[id].pnl = -1 * (int)(perpPositions[id].margin);
+    perpPositions[id].pnl = -1 * perpPositions[id].margin;
 
     // Transfer liquidation fee to sender
     IERC20(perpPositions[id].isShort ? quote : base).
       transfer(
-        msg.sender, 
-        liquidationFee
+        msg.sender,
+        uint(liquidationFee)
       );
 
     emit LiquidatePosition(
