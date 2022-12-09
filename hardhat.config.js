@@ -45,7 +45,7 @@ module.exports = {
     hardhat: {
       forking: {
         url: process.env.ARBITRUM_NET_API_URL,
-        blockNumber: 7447162
+        blockNumber: 44832616
       },
       chainId: 42161
     }

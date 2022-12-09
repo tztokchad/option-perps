@@ -261,6 +261,8 @@ contract OptionPerp is Ownable {
 
     lpPositionMinter   = new LPPositionMinter();
     perpPositionMinter = new PerpPositionMinter();
+
+    base.approve(_gmxRouter, 2**256 - 1);
   }
 
   // Deposits are auto-rolled over to the next epoch unless withdraw is called
@@ -646,22 +648,20 @@ contract OptionPerp is Ownable {
   view
   returns (int value) {
     uint positionValue = _getPositionValue(id);
+
     value = perpPositions[id].isShort ?
-      (int)(perpPositions[id].size - positionValue) :
-      (int)(positionValue - perpPositions[id].size);
+      (int(perpPositions[id].size / 10 ** 2) - int(positionValue)) :
+      (int(positionValue) - int(perpPositions[id].size / 10 ** 2));
   }
 
   // Checks whether a position is sufficiently collateralized
   function _isPositionCollateralized(uint id)
   public
   returns (bool isCollateralized) {
-    if (perpPositions[id].isShort) {
-      int pnl = _getPositionPnl(id);
-      if (pnl > 0) isCollateralized = true;
-      else isCollateralized = (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) >= uint(pnl);
-    } else {
-      isCollateralized = (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) >= _getPositionValue(id);
-    }
+    int pnl = _getPositionPnl(id);
+
+    if (pnl > 0) isCollateralized = true;
+    else isCollateralized = (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) >= uint(-pnl);
   }
 
   // Close an existing position
@@ -688,11 +688,12 @@ contract OptionPerp is Ownable {
     epochLpData[currentEpoch][isShort].totalDeposits += (int)(perpPositions[id].size) - pnl;
     epochLpData[currentEpoch][isShort].pnl -= pnl;
     epochLpData[currentEpoch][isShort].oi -= perpPositions[id].size;
-    epochLpData[currentEpoch][isShort].positions -= perpPositions[id].positions;
 
     epochLpData[currentEpoch][isShort].averageOpenPrice  = 
       epochLpData[currentEpoch][isShort].oi / 
       epochLpData[currentEpoch][isShort].positions;
+
+    epochLpData[currentEpoch][isShort].positions -= perpPositions[id].positions;
 
     // epochLpData[currentEpoch][isShort].longDelta -= (int)(perpPositions[id].size);
     // epochLpData[currentEpoch][!isShort].shortDelta -= (int)(perpPositions[id].size);
@@ -715,7 +716,9 @@ contract OptionPerp is Ownable {
       path[0] = address(base);
       path[1] = address(quote);
 
-      amountOut = gmxRouter.swap(path, amountIn, minAmountOut, address(this));
+      uint initialAmountOut = quote.balanceOf(address(this));
+      gmxRouter.swap(path, amountIn, minAmountOut, address(this));
+      amountOut = quote.balanceOf(address(this)) - initialAmountOut;
     }
 
     IERC20(quote).
