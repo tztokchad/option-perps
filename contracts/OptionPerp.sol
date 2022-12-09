@@ -343,7 +343,7 @@ contract OptionPerp is Ownable {
     int finalLpAmountToWithdraw = _calcFinalLpAmount(id);
     require(finalLpAmountToWithdraw > 0);
 
-    IERC20(lpPositions[id].isQuote ? quote : base).transfer(msg.sender, uint(finalLpAmountToWithdraw));
+    IERC20(lpPositions[id].isQuote ? quote : base).transfer(msg.sender, _safeConvertToUint(finalLpAmountToWithdraw));
 
     // Update epoch LP data
     epochLpData[lpPositions[id].toWithdrawEpoch][lpPositions[id].isQuote].withdrawn += finalLpAmountToWithdraw;
@@ -597,7 +597,7 @@ contract OptionPerp is Ownable {
   returns (int volatility) {
     volatility =
       int(volatilityOracle.getVolatility(
-        uint(_strike)
+        _safeConvertToUint(_strike)
       ));
   }
 
@@ -650,7 +650,7 @@ contract OptionPerp is Ownable {
     IERC20(quote).transferFrom(
       msg.sender,
       address(this),
-      uint(collateralAmount)
+      _safeConvertToUint(collateralAmount)
     );
     emit AddCollateralToPosition(
       id,
@@ -758,7 +758,7 @@ contract OptionPerp is Ownable {
       uint amountOut;
 
       if (perpPositions[id].isShort) {
-        amountOut = uint(toTransfer);
+        amountOut = _safeConvertToUint(toTransfer);
         require(amountOut >= minAmountOut, "Amount out is not enough");
       } else {
         // Convert collateral + PNL to quote and send to user
@@ -769,7 +769,7 @@ contract OptionPerp is Ownable {
         path[1] = address(quote);
 
         uint initialAmountOut = quote.balanceOf(address(this));
-        gmxRouter.swap(path, uint(toTransfer), minAmountOut, address(this));
+        gmxRouter.swap(path, _safeConvertToUint(toTransfer), minAmountOut, address(this));
         amountOut = quote.balanceOf(address(this)) - initialAmountOut;
       }
 
@@ -814,7 +814,7 @@ contract OptionPerp is Ownable {
     IERC20(perpPositions[id].isShort ? quote : base).
       transfer(
         msg.sender,
-        uint(liquidationFee)
+        _safeConvertToUint(liquidationFee)
       );
 
     emit LiquidatePosition(
