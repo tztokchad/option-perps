@@ -654,6 +654,16 @@ contract OptionPerp is Ownable {
       (int(positionValue) - int(perpPositions[id].size / 10 ** 2));
   }
 
+  // Get net margin of an open perp position (1e6)
+  function _getPositionNetMargin(uint id)
+  public
+  view
+  returns (int value) {
+    // TODO: handle closing fee
+    // TODO: handle funding
+    value = int(perpPositions[id].margin) - int(perpPositions[id].premium) - int(perpPositions[id].fees);
+  }
+
   // Checks whether a position is sufficiently collateralized
   function _isPositionCollateralized(uint id)
   public
@@ -661,7 +671,7 @@ contract OptionPerp is Ownable {
     int pnl = _getPositionPnl(id);
 
     if (pnl > 0) isCollateralized = true;
-    else isCollateralized = (perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].fees) >= uint(-pnl);
+    else isCollateralized = _getPositionNetMargin(id) + pnl >= 0;
   }
 
   // Close an existing position
