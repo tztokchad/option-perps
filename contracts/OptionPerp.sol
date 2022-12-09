@@ -728,11 +728,14 @@ contract OptionPerp is Ownable {
     int pnl = _getPositionPnl(id);
     // Settle option positions
     bool isShort = perpPositions[id].isShort;
+    // Calculate funding
+    int funding = _getPositionFunding(id);
+    // Calculate closing fees
+    int closingFees = _calculateFees(false, ((perpPositions[id].size / 10 ** 2) + pnl));
 
     epochLpData[currentEpoch][isShort].margin -= perpPositions[id].margin;
     epochLpData[currentEpoch][isShort].activeDeposits -= perpPositions[id].size;
     epochLpData[currentEpoch][isShort].totalDeposits += perpPositions[id].size - pnl;
-    epochLpData[currentEpoch][isShort].pnl -= pnl;
     epochLpData[currentEpoch][isShort].oi -= perpPositions[id].size;
 
     epochLpData[currentEpoch][isShort].averageOpenPrice  =
@@ -746,32 +749,32 @@ contract OptionPerp is Ownable {
 
     perpPositions[id].isOpen = false;
     perpPositions[id].pnl = pnl;
+    perpPositions[id].funding = funding;
+    perpPositions[id].closingFees = closingFees;
 
-    uint amountOut;
+    int toTransfer = perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].openingFees - perpPositions[id].closingFees - perpPositions[id].funding;
 
-    // Transfer collateral + PNL to user
-    if (perpPositions[id].isShort) {
-      amountOut = uint(perpPositions[id].margin + pnl);
-      require(amountOut >= minAmountOut, "Amount out is not enough");
-    } else {
-      // Convert collateral + PNL to quote and send to user
-      int amountIn = perpPositions[id].margin + pnl;
-      address[] memory path;
+    if (toTransfer > 0) {
+      uint amountOut;
 
-      path = new address[](2);
-      path[0] = address(base);
-      path[1] = address(quote);
+      if (perpPositions[id].isShort) {
+        amountOut = uint(toTransfer);
+        require(amountOut >= minAmountOut, "Amount out is not enough");
+      } else {
+        // Convert collateral + PNL to quote and send to user
+        address[] memory path;
 
-      uint initialAmountOut = quote.balanceOf(address(this));
-      gmxRouter.swap(path, uint(amountIn), minAmountOut, address(this));
-      amountOut = quote.balanceOf(address(this)) - initialAmountOut;
+        path = new address[](2);
+        path[0] = address(base);
+        path[1] = address(quote);
+
+        uint initialAmountOut = quote.balanceOf(address(this));
+        gmxRouter.swap(path, uint(toTransfer), minAmountOut, address(this));
+        amountOut = quote.balanceOf(address(this)) - initialAmountOut;
+      }
+
+      IERC20(quote).transfer(perpPositions[id].owner, amountOut);
     }
-
-    IERC20(quote).
-        transfer(
-          perpPositions[id].owner,
-          amountOut
-        );
 
     emit ClosePerpPosition(
       id,
