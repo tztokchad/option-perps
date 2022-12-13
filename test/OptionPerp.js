@@ -11,11 +11,9 @@ describe("Option Perp", function() {
   let priceOracle;
   let volatilityOracle;
   let optionPricing;
-  let lpPositionMinter;
+  let quoteLpPositionMinter;
+  let baseLpPositionMinter;
   let perpPositionMinter;
-  let uniswapFactory;
-  let wethUsdcPair;
-  let uniswapRouter;
   let optionPerp;
 
   const MAX_UINT =
@@ -67,9 +65,10 @@ describe("Option Perp", function() {
     optionPricing = await OptionPricing.deploy();
     // LP position minter
     const LPPositionMinter = await ethers.getContractFactory(
-      "LPPositionMinter"
+      "LpPositionMinter"
     );
-    lpPositionMinter = await LPPositionMinter.deploy();
+    quoteLpPositionMinter = await LPPositionMinter.deploy("USDC", "DOPEX-USDC-O-P-LP", 6);
+    baseLpPositionMinter = await LPPositionMinter.deploy("ETH", "DOPEX-ETH-O-P-LP", 18);
     // Perp position minter
     const PerpPositionMinter = await ethers.getContractFactory(
       "PerpPositionMinter"
@@ -83,10 +82,13 @@ describe("Option Perp", function() {
       optionPricing.address,
       volatilityOracle.address,
       priceOracle.address,
-      "0xaBBc5F99639c9B6bCb58544ddf04EFA6802F4064"
+      "0xaBBc5F99639c9B6bCb58544ddf04EFA6802F4064",
+      quoteLpPositionMinter.address,
+      baseLpPositionMinter.address
     );
     console.log("deployed option perp:", optionPerp.address);
-    await lpPositionMinter.setOptionPerpContract(optionPerp.address);
+    await quoteLpPositionMinter.setOptionPerpContract(optionPerp.address);
+    await baseLpPositionMinter.setOptionPerpContract(optionPerp.address);
     await perpPositionMinter.setOptionPerpContract(optionPerp.address);
 
     // Transfer USDC and WETH to our address from another impersonated address
@@ -132,9 +134,9 @@ describe("Option Perp", function() {
     expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
       amount
     );
-    const lpPosition = await optionPerp.lpPositions(0);
-    expect(lpPosition.amount.toString()).equals(amount.toString());
-    expect(lpPosition.owner).equals(user1.address);
+    const deposited = await quoteLpPositionMinter.balanceOf(user1.address);
+
+    expect(deposited.toString()).equals(amount.toString());
   });
 
   it("should not be able to deposit base without sufficient weth balance", async () => {
@@ -152,18 +154,15 @@ describe("Option Perp", function() {
     expect((await optionPerp.epochLpData(1, false)).totalDeposits).equals(
       amount
     );
-    const lpPosition = await optionPerp.lpPositions(1);
-    expect(lpPosition.amount.toString()).equals(amount.toString());
-    expect(lpPosition.owner).equals(user1.address);
-  });
+    const deposited = await baseLpPositionMinter.balanceOf(user1.address);
 
-  it("should be able to immediately initialize a withdraw, even before first bootstrap", async () => {
-    const amount = (10 * 10 ** 18).toString();
-    await optionPerp.connect(user1).initWithdraw(false, amount, 1);
+    expect(deposited.toString()).equals(amount.toString());
   });
 
   it("should not be able to immediately withdraw", async () => {
-    await expect(optionPerp.connect(user1).withdraw(1)).to.be.revertedWith('To withdraw epoch must be prior to current epoch');
+    const amount = (10 * 10 ** 6).toString();
+    await quoteLpPositionMinter.approve(optionPerp.address, amount);
+    await expect(optionPerp.connect(user1).withdraw(true, amount, 0)).to.be.revertedWith('Withdraws are not open');
   });
 
   it("should not be able to open position at epoch 0", async () => {
@@ -214,10 +213,6 @@ describe("Option Perp", function() {
     expect(await usdc.balanceOf(user1.address)).equals(
       initialBalance.sub(toDecimals(500, 6))
     );
-  });
-
-  it("should not be able to withdraw even if correctly initialized before first bootstrap if final lp amount is 0", async () => {
-    await expect(optionPerp.connect(user1).withdraw(1)).to.be.revertedWith('Invalid final lp amount');
   });
 
   it("should be able to close a long position with a profit", async () => {
