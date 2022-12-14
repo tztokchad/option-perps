@@ -84,7 +84,8 @@ contract OptionPerp is Ownable {
   mapping (uint => EpochData) public epochData;
 
   int public divisor                = 1e8;
-  int public fundingRate            = 3650000000; // 36.5% annualized (0.1% a day)
+  int public minFundingRate         = 3650000000; // 36.5% annualized (0.1% a day)
+  int public maxFundingRate         = 365000000000; // 365% annualized (1% a day)
   int public feeOpenPosition        = 5000000; // 0.05%
   int public feeClosePosition       = 5000000; // 0.05%
   int public feeLiquidation         = 50000000; // 0.5%
@@ -477,11 +478,6 @@ contract OptionPerp is Ownable {
     // Calculate premium for ATM option in USD
     // If is short, premium is in quote.decimals(). if long, base.decimals();
     int premium = _calcPremium(_getMarkPrice(), _size);
-    console.log('Premium');
-    console.logInt(premium);
-
-    // Calculate funding in USD
-    int funding = _calcFunding(_size, _collateralAmount);
 
     // Calculate opening fees in USD
     int openingFees = _calcFees(true, _size / 10 ** 2);
@@ -494,7 +490,7 @@ contract OptionPerp is Ownable {
     console.logInt(closingFees);
 
     // Calculate minimum collateral in USD
-    int minCollateral = (premium * 2) + openingFees + closingFees + funding;
+    int minCollateral = (premium * 2) + openingFees + closingFees;
     console.log('Min collateral');
     console.logInt(minCollateral);
 
@@ -592,21 +588,6 @@ contract OptionPerp is Ownable {
       ));
   }
 
-  // Calculate funding for opening a position until expiry
-  function _calcFunding(
-    int _size, // in USD (1e8)
-    int _collateralAmount // (ie6) in collateral used to write option. long = usd, short = eth
-  )
-  internal
-  returns (int funding) {
-    if (_collateralAmount > _size / 10 ** 2) {
-      funding = 0;
-    } else {
-      int _borrowed = _size / 10 ** 2 - _collateralAmount;
-      funding = ((_borrowed * fundingRate / (divisor * 100)) * (epochData[currentEpoch].expiry - int(block.timestamp))) / 365 days;
-    }
-  }
-
   // Calculate fees for opening a perp position
   function _calcFees(
     bool _openingPosition,
@@ -663,6 +644,45 @@ contract OptionPerp is Ownable {
   public
   view
   returns (int funding) {
+    int markPrice = _getMarkPrice() / 10 ** 2;
+    int shortOiInUsd = epochLpData[currentEpoch][true].oi * markPrice / 10 ** 10;
+    int longOiInUsd = epochLpData[currentEpoch][false].oi * markPrice / 10 ** 10;
+
+    // TODO: I think totalDeposits is wrong
+    int totalQuoteDepositsInUsd = epochLpData[currentEpoch][true].totalDeposits;
+    int totalBaseDepositsInUsd = markPrice * epochLpData[currentEpoch][false].totalDeposits / int(10 ** base.decimals());
+
+    int unhedged;
+
+    console.log('short oi');
+    console.logInt(shortOiInUsd);
+    console.log('long oi');
+    console.logInt(longOiInUsd);
+    console.log('isShort');
+    console.log(perpPositions[id].isShort);
+
+    console.log('total base deposits in usd');
+    console.logInt(totalBaseDepositsInUsd);
+
+    if (perpPositions[id].isShort) {
+      unhedged = shortOiInUsd - longOiInUsd - totalBaseDepositsInUsd;
+    } else {
+      unhedged = longOiInUsd - shortOiInUsd - totalQuoteDepositsInUsd;
+    }
+
+    console.log('unhedged');
+    console.logInt(unhedged);
+
+    if (unhedged <= 0) return minFundingRate;
+
+    int longShortRatio = divisor * longOiInUsd / shortOiInUsd;
+    int longFunding;
+
+    if (longShortRatio > divisor) longFunding = maxFundingRate;
+    else longFunding = ((maxFundingRate - minFundingRate) * (longShortRatio)) / (divisor);
+
+    int fundingRate = perpPositions[id].isShort ? -1 * longFunding :  longFunding;
+
     int _borrowed = perpPositions[id].size / 10 ** 2 - perpPositions[id].margin;
     funding = ((_borrowed * fundingRate / (divisor * 100)) * int(block.timestamp - perpPositions[id].openedAt)) / 365 days;
   }
