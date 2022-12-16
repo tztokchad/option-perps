@@ -516,13 +516,11 @@ contract OptionPerp is Ownable {
     // Check for expiry
     require(epochData[currentEpoch].expiry > int(block.timestamp), "Time must be before expiry");
     int _sizeInBase = _size * int(10 ** base.decimals()) / _getMarkPrice();
-    console.log('Size in base');
-    console.logInt(_sizeInBase);
     // Check if enough liquidity is available to open position
     require(
       (epochLpData[currentEpoch][_isShort].totalDeposits -
       epochLpData[currentEpoch][_isShort].activeDeposits) >=
-      (_isShort ? _size : _sizeInBase),
+      (_isShort ? _size / 10 ** 2 : _sizeInBase),
       "Not enough liquidity to open position"
     );
 
@@ -734,6 +732,21 @@ contract OptionPerp is Ownable {
   returns (int value) {
     int closingFees = _calcFees(false, ((perpPositions[id].size / 10 ** 2) + _getPositionPnl(id)));
     value = perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].openingFees - closingFees - _getPositionFunding(id);
+  }
+
+  // Get liquidation price (1e8)
+  function _getPositionLiquidationPrice(uint id)
+  public
+  view
+  returns (int price) {
+    int netMargin = _getPositionNetMargin(id);
+    netMargin -= netMargin * liquidationThreshold / (divisor * 100);
+
+    if (perpPositions[id].isShort) {
+      price = (divisor * (perpPositions[id].size) / perpPositions[id].positions) + (divisor * (netMargin * 10 ** 2) / perpPositions[id].positions);
+    } else {
+      price = (divisor * (perpPositions[id].size) / perpPositions[id].positions) - (divisor * (netMargin * 10 ** 2) / perpPositions[id].positions);
+    }
   }
 
   // Checks whether a position is sufficiently collateralized

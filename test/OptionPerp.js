@@ -243,20 +243,65 @@ describe("Option Perp", function() {
     let amountOutAfterClosing = await optionPerp.connect(user1).callStatic.closePosition(0, 0);
     expect(amountOutAfterClosing).to.eq('993749995');
 
-    await network.provider.send("evm_increaseTime", [36000]);
+    await network.provider.send("evm_setNextBlockTimestamp", [1671240414]);
     await network.provider.send("evm_mine");
 
-    // After 10 hours we pay more funding
+    // After hours we pay more funding
     amountOutAfterClosing = await optionPerp.connect(user1).callStatic.closePosition(0, 0);
-    expect(amountOutAfterClosing).to.eq('993541656');
+    expect(amountOutAfterClosing).to.gte('989965533');
 
     await optionPerp.connect(user1).closePosition(0, 0);
 
     const finalBalance = (await usdc.balanceOf(user1.address));
 
     // Initial balance was 100k
-    expect(finalBalance).to.eq('100493541656');
+    expect(finalBalance).to.eq('100489965527');
   });
 
+  it("should open multiple position (short, long) successfully", async () => {
+    await priceOracle.updateUnderlyingPrice("100000000000");
 
+    const initialBalance = (await usdc.balanceOf(user1.address));
+    expect(initialBalance).to.eq('100489965527');
+
+    console.log('Open long');
+
+    await optionPerp
+      .connect(user1)
+      .openPosition(false, toDecimals(1000, 8), toDecimals(500, 6));
+
+    console.log('Open short');
+
+    await optionPerp
+      .connect(user1)
+      .openPosition(true, toDecimals(3000, 8), toDecimals(910, 6));
+
+    // We open a long of $1000 with $500 of collateral (lev 2x)
+    // We open a short of $3000 with $910 of collateral (lev 3.29x)
+
+    await network.provider.send("evm_setNextBlockTimestamp", [1671250414]);
+    await network.provider.send("evm_mine");
+
+    // ETH GOES +29.2%
+    await priceOracle.updateUnderlyingPrice("129200000000");
+
+    const longPnl = await optionPerp._getPositionPnl(1);
+    const shortPnl = await optionPerp._getPositionPnl(2);
+
+    const longLiquidationPrice = await optionPerp._getPositionLiquidationPrice(1);
+    expect(longLiquidationPrice).to.eq(53265257300); // ETH at $532
+
+    const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(2);
+    expect(shortLiquidationPrice).to.eq(128513244400); // ETH at $1285
+
+    expect(longPnl).to.eq(292000000); // $292
+    expect(shortPnl).to.eq(-876000000); // -$900
+
+    const obtainedClosingLong = await optionPerp.connect(user1).callStatic.closePosition(1, 0);
+    expect(obtainedClosingLong).to.eq(783944660);
+
+    await expect(optionPerp.connect(user1).callStatic.closePosition(2, 0)).to.be.revertedWith("Position is not collateralized");
+
+    // ETH GOES TO -50%
+  });
 });
