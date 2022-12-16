@@ -13,6 +13,7 @@ import {IOptionPricing} from "./interface/IOptionPricing.sol";
 import {IVolatilityOracle} from "./interface/IVolatilityOracle.sol";
 import {IPriceOracle} from "./interface/IPriceOracle.sol";
 import {IGmxRouter} from "./interface/IGmxRouter.sol";
+import {IUniswapV3Router} from "./interface/IUniswapV3Router.sol";
 
 import "hardhat/console.sol";
 
@@ -74,6 +75,7 @@ contract OptionPerp is Ownable {
   PerpPositionMinter public perpPositionMinter;
 
   IGmxRouter public gmxRouter;
+  IUniswapV3Router public uniV3Router;
 
   uint public currentEpoch;
 
@@ -90,6 +92,8 @@ contract OptionPerp is Ownable {
   int public feeClosePosition       = 5000000; // 0.05%
   int public feeLiquidation         = 50000000; // 0.5%
   int public liquidationThreshold   = 500000000; // 5%
+
+  uint internal constant MAX_UINT = 2**256 - 1;
 
   uint internal constant POSITION_PRECISION = 1e8;
   uint internal constant OPTIONS_PRECISION = 1e18;
@@ -258,6 +262,7 @@ contract OptionPerp is Ownable {
     address _volatilityOracle,
     address _priceOracle,
     address _gmxRouter,
+    address _uniV3Router,
     address _baseLpPositionMinter,
     address _quoteLpPositionMinter
   ) {
@@ -271,13 +276,59 @@ contract OptionPerp is Ownable {
     optionPricing = IOptionPricing(_optionPricing);
     volatilityOracle = IVolatilityOracle(_volatilityOracle);
     priceOracle = IPriceOracle(_priceOracle);
+    uniV3Router = IUniswapV3Router(_uniV3Router);
     gmxRouter = IGmxRouter(_gmxRouter);
 
     quoteLpPositionMinter = ILpPositionMinter(_baseLpPositionMinter);
     baseLpPositionMinter = ILpPositionMinter(_quoteLpPositionMinter);
     perpPositionMinter = new PerpPositionMinter();
 
-    base.approve(_gmxRouter, 2**256 - 1);
+    base.approve(_gmxRouter, MAX_UINT);
+    base.approve(_uniV3Router, MAX_UINT);
+  }
+
+  function _swapUsingUniV3ExactIn(
+        address from,
+        address to,
+        uint256 amountIn,
+        uint256 minAmountOut,
+        uint24 fees
+    ) internal returns (uint256 amountOut) {
+      IUniswapV3Router.ExactInputSingleParams
+          memory swapParams = IUniswapV3Router.ExactInputSingleParams(
+              from,
+              to,
+              fees,
+              address(this),
+              block.timestamp,
+              amountIn,
+              minAmountOut,
+              0
+          );
+
+      amountOut = uniV3Router.exactInputSingle(swapParams);
+  }
+
+  function _swapUsingUniV3ExactOut(
+        address from,
+        address to,
+        uint256 amountOut,
+        uint256 maxAmountIn,
+        uint24 fees
+    ) internal returns (uint256 amountIn) {
+      IUniswapV3Router.ExactOutputSingleParams
+          memory swapParams = IUniswapV3Router.ExactOutputSingleParams(
+              from,
+              to,
+              fees,
+              address(this),
+              block.timestamp,
+              amountOut,
+              maxAmountIn,
+              0
+          );
+
+      amountIn = uniV3Router.exactOutputSingle(swapParams);
   }
 
   function _getTotalSupply(bool isQuote) internal view returns (int totalSupply) {
@@ -648,7 +699,7 @@ contract OptionPerp is Ownable {
     int shortOiInUsd = epochLpData[currentEpoch][true].oi * markPrice / 10 ** 10;
     int longOiInUsd = epochLpData[currentEpoch][false].oi * markPrice / 10 ** 10;
 
-    int fundingRate = 0;
+    int fundingRate = minFundingRate;
 
     if (shortOiInUsd > 0) {
       int longShortRatio = divisor * longOiInUsd / shortOiInUsd;
@@ -702,7 +753,7 @@ contract OptionPerp is Ownable {
   function closePosition(
     uint id,
     uint minAmountOut
-  ) external {
+  ) external returns (uint amountOut) {
     // Check if position is open
     require(perpPositions[id].isOpen, "Position not open");
     // Sender must be owner of position
@@ -718,6 +769,11 @@ contract OptionPerp is Ownable {
     bool isShort = perpPositions[id].isShort;
     // Calculate funding
     int funding = _getPositionFunding(id);
+
+    console.log('CLOSING');
+    console.log('FUNDING');
+    console.logInt(funding);
+
     // Calculate closing fees
     int closingFees = _calcFees(false, ((perpPositions[id].size / 10 ** 2) + pnl));
 
@@ -740,28 +796,18 @@ contract OptionPerp is Ownable {
     perpPositions[id].funding = funding;
     perpPositions[id].closingFees = closingFees;
 
-    int toTransfer = perpPositions[id].margin - perpPositions[id].premium - perpPositions[id].openingFees - perpPositions[id].closingFees - perpPositions[id].funding;
+    int toTransfer = perpPositions[id].margin + pnl - perpPositions[id].premium - perpPositions[id].openingFees - perpPositions[id].closingFees - perpPositions[id].funding;
 
     if (toTransfer > 0) {
-      uint amountOut;
+      amountOut = _safeConvertToUint(toTransfer);
+      require(amountOut >= minAmountOut, "Amount out is not enough");
 
-      if (perpPositions[id].isShort) {
-        amountOut = _safeConvertToUint(toTransfer);
-        require(amountOut >= minAmountOut, "Amount out is not enough");
-      } else {
+      if (!perpPositions[id].isShort) {
         // Convert collateral + PNL to quote and send to user
-        address[] memory path;
-
-        path = new address[](2);
-        path[0] = address(base);
-        path[1] = address(quote);
-
-        uint initialAmountOut = quote.balanceOf(address(this));
-        gmxRouter.swap(path, _safeConvertToUint(toTransfer), minAmountOut, address(this));
-        amountOut = quote.balanceOf(address(this)) - initialAmountOut;
+        _swapUsingUniV3ExactOut(address(base), address(quote), amountOut, MAX_UINT, 500);
       }
 
-      IERC20(quote).transfer(perpPositions[id].owner, amountOut);
+      quote.transfer(perpPositions[id].owner, amountOut);
     }
 
     emit ClosePerpPosition(

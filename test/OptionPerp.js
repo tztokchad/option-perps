@@ -15,6 +15,8 @@ describe("Option Perp", function() {
   let baseLpPositionMinter;
   let perpPositionMinter;
   let optionPerp;
+  let b50;
+  let bf5;
 
   const MAX_UINT =
     "115792089237316195423570985008687907853269984665640564039457584007913129639935";
@@ -82,7 +84,8 @@ describe("Option Perp", function() {
       optionPricing.address,
       volatilityOracle.address,
       priceOracle.address,
-      "0xaBBc5F99639c9B6bCb58544ddf04EFA6802F4064",
+      "0xaBBc5F99639c9B6bCb58544ddf04EFA6802F4064", // GMX
+      "0xE592427A0AEce92De3Edee1F18E0157C05861564", // UNI V3
       quoteLpPositionMinter.address,
       baseLpPositionMinter.address
     );
@@ -102,11 +105,11 @@ describe("Option Perp", function() {
       params: ["0x9bf54297d9270730192a83EF583fF703599D9F18"],
     });
 
-    const b50 = await ethers.provider.getSigner(
+    b50 = await ethers.provider.getSigner(
       "0xB50F58D50e30dFdAAD01B1C6bcC4Ccb0DB55db13"
     );
 
-    const bf5 = await ethers.provider.getSigner(
+    bf5 = await ethers.provider.getSigner(
       "0x9bf54297d9270730192a83EF583fF703599D9F18"
     );
 
@@ -128,13 +131,15 @@ describe("Option Perp", function() {
   });
 
   it("should deposit quote successfully", async () => {
+    await usdc.connect(bf5).transfer(owner.address, "100000000000");
+
     const amount = 10000 * 10 ** 6;
-    await usdc.connect(user1).approve(optionPerp.address, MAX_UINT);
-    await optionPerp.connect(user1).deposit(true, amount);
+    await usdc.approve(optionPerp.address, MAX_UINT);
+    await optionPerp.deposit(true, amount);
     expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
       amount
     );
-    const deposited = await quoteLpPositionMinter.balanceOf(user1.address);
+    const deposited = await quoteLpPositionMinter.balanceOf(owner.address);
 
     expect(deposited.toString()).equals(amount.toString());
   });
@@ -148,13 +153,15 @@ describe("Option Perp", function() {
   });
 
   it("should deposit base successfully", async () => {
+    await weth.connect(b50).transfer(owner.address, ethers.utils.parseEther("200.0"));
+
     const amount = (10 * 10 ** 18).toString();
-    await weth.connect(user1).approve(optionPerp.address, MAX_UINT);
-    await optionPerp.connect(user1).deposit(false, amount);
+    await weth.connect(owner).approve(optionPerp.address, MAX_UINT);
+    await optionPerp.connect(owner).deposit(false, amount);
     expect((await optionPerp.epochLpData(1, false)).totalDeposits).equals(
       amount
     );
-    const deposited = await baseLpPositionMinter.balanceOf(user1.address);
+    const deposited = await baseLpPositionMinter.balanceOf(owner.address);
 
     expect(deposited.toString()).equals(amount.toString());
   });
@@ -194,17 +201,29 @@ describe("Option Perp", function() {
 
   it("should not be able to open position if user doesn't have enough funds", async () => {
     await expect(
-      optionPerp
+      optionPerp.connect(user2)
         .openPosition(false, toDecimals(1000, 8), toDecimals(500, 8))
     ).to.be.revertedWith("ERC20: transfer amount exceeds balance");
   });
 
-  it("should open position successfully", async () => {
+  it("should not be able to open a long position successfully if size is too big for LPs", async () => {
     const initialBalance = (await usdc.balanceOf(user1.address));
-    console.log(
-      "user1 balance:",
-      initialBalance.toString()
-    );
+    expect(initialBalance).to.eq('100000000000');
+
+    await usdc.connect(user1).approve(optionPerp.address, "100000000000000000000");
+
+    await expect(optionPerp
+      .connect(user1)
+      .openPosition(false, toDecimals(100000, 8), toDecimals(50000, 6))
+    ).to.be.revertedWith("Not enough liquidity to open position");
+  });
+
+  it("should open a long position successfully", async () => {
+    const initialBalance = (await usdc.balanceOf(user1.address));
+    expect(initialBalance).to.eq('100000000000');
+
+    await usdc.connect(user1).approve(optionPerp.address, "100000000000000000000");
+
     await optionPerp
       .connect(user1)
       .openPosition(false, toDecimals(1000, 8), toDecimals(500, 6));
@@ -216,8 +235,28 @@ describe("Option Perp", function() {
   });
 
   it("should be able to close a long position with a profit", async () => {
-    await priceOracle.updateUnderlyingPrice("99000000000");
+    await priceOracle.updateUnderlyingPrice("150000000000");
+
+    const estimatedPnl = await optionPerp._getPositionPnl(0);
+    expect(estimatedPnl).to.eq('500000000');
+
+    let amountOutAfterClosing = await optionPerp.connect(user1).callStatic.closePosition(0, 0);
+    expect(amountOutAfterClosing).to.eq('993749995');
+
+    await network.provider.send("evm_increaseTime", [36000]);
+    await network.provider.send("evm_mine");
+
+    // After 10 hours we pay more funding
+    amountOutAfterClosing = await optionPerp.connect(user1).callStatic.closePosition(0, 0);
+    expect(amountOutAfterClosing).to.eq('993541656');
 
     await optionPerp.connect(user1).closePosition(0, 0);
+
+    const finalBalance = (await usdc.balanceOf(user1.address));
+
+    // Initial balance was 100k
+    expect(finalBalance).to.eq('100493541656');
   });
+
+
 });
