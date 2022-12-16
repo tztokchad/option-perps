@@ -283,25 +283,24 @@ describe("Option Perp", function() {
     await network.provider.send("evm_mine");
 
     // ETH GOES +29.2%
-    await priceOracle.updateUnderlyingPrice("129200000000");
+    await priceOracle.updateUnderlyingPrice("128400000000");
 
     const longPnl = await optionPerp._getPositionPnl(1);
     const shortPnl = await optionPerp._getPositionPnl(2);
 
     const longLiquidationPrice = await optionPerp._getPositionLiquidationPrice(1);
-    expect(longLiquidationPrice).to.eq(53265257300); // ETH at $532
+    expect(longLiquidationPrice).to.eq(53264877300); // ETH at $532
 
     const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(2);
-    expect(shortLiquidationPrice).to.eq(128513244400); // ETH at $1285
+    expect(shortLiquidationPrice).to.eq(128512864400); // ETH at $1285
 
-    expect(longPnl).to.eq(292000000); // $292
-    expect(shortPnl).to.eq(-876000000); // -$900
+    expect(longPnl).to.eq(284000000); // $284
+    expect(shortPnl).to.eq(-852000000); // -$852
 
     const obtainedClosingLong = await optionPerp.connect(user1).callStatic.closePosition(1, 0);
-    expect(obtainedClosingLong).to.eq(783944660);
+    expect(obtainedClosingLong).to.eq(775948660); // $775
 
-    await expect(optionPerp.connect(user1).callStatic.closePosition(2, 0)).to.be.revertedWith("Position is not collateralized");
-
-    // ETH GOES TO -50%
+    const obtainedClosingShort = await optionPerp.connect(user1).callStatic.closePosition(2, 0); // $1 from liquidationPrice
+    expect(obtainedClosingShort).to.eq(48406244); // $48
   });
 });
