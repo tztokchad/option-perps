@@ -648,40 +648,17 @@ contract OptionPerp is Ownable {
     int shortOiInUsd = epochLpData[currentEpoch][true].oi * markPrice / 10 ** 10;
     int longOiInUsd = epochLpData[currentEpoch][false].oi * markPrice / 10 ** 10;
 
-    // TODO: I think totalDeposits is wrong
-    int totalQuoteDepositsInUsd = epochLpData[currentEpoch][true].totalDeposits;
-    int totalBaseDepositsInUsd = markPrice * epochLpData[currentEpoch][false].totalDeposits / int(10 ** base.decimals());
+    int fundingRate = 0;
 
-    int unhedged;
+    if (shortOiInUsd > 0) {
+      int longShortRatio = divisor * longOiInUsd / shortOiInUsd;
+      int longFunding;
 
-    console.log('short oi');
-    console.logInt(shortOiInUsd);
-    console.log('long oi');
-    console.logInt(longOiInUsd);
-    console.log('isShort');
-    console.log(perpPositions[id].isShort);
+      if (longShortRatio > divisor) longFunding = maxFundingRate;
+      else longFunding = ((maxFundingRate - minFundingRate) * (longShortRatio)) / (divisor);
 
-    console.log('total base deposits in usd');
-    console.logInt(totalBaseDepositsInUsd);
-
-    if (perpPositions[id].isShort) {
-      unhedged = shortOiInUsd - longOiInUsd - totalBaseDepositsInUsd;
-    } else {
-      unhedged = longOiInUsd - shortOiInUsd - totalQuoteDepositsInUsd;
+      fundingRate = perpPositions[id].isShort ? -1 * longFunding :  longFunding;
     }
-
-    console.log('unhedged');
-    console.logInt(unhedged);
-
-    if (unhedged <= 0) return minFundingRate;
-
-    int longShortRatio = divisor * longOiInUsd / shortOiInUsd;
-    int longFunding;
-
-    if (longShortRatio > divisor) longFunding = maxFundingRate;
-    else longFunding = ((maxFundingRate - minFundingRate) * (longShortRatio)) / (divisor);
-
-    int fundingRate = perpPositions[id].isShort ? -1 * longFunding :  longFunding;
 
     int _borrowed = perpPositions[id].size / 10 ** 2 - perpPositions[id].margin;
     funding = ((_borrowed * fundingRate / (divisor * 100)) * int(block.timestamp - perpPositions[id].openedAt)) / 365 days;
