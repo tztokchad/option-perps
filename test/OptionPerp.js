@@ -278,7 +278,9 @@ describe("Option Perp", function() {
 
     // We open a long of $1000 with $500 of collateral (lev 2x)
     // We open a short of $3000 with $910 of collateral (lev 3.29x)
+  });
 
+  it("liquidation price is computed correctly", async () => {
     await network.provider.send("evm_setNextBlockTimestamp", [1671250414]);
     await network.provider.send("evm_mine");
 
@@ -302,5 +304,60 @@ describe("Option Perp", function() {
 
     const obtainedClosingShort = await optionPerp.connect(user1).callStatic.closePosition(2, 0); // $1 from liquidationPrice
     expect(obtainedClosingShort).to.eq(48406244); // $48
+  });
+
+  it("add collateral to improve liquidation price", async () => {
+    const initialBalance = (await usdc.balanceOf(user1.address));
+    expect(initialBalance).to.eq('99079965527');
+
+    // Deposit $500 more
+    await optionPerp.connect(user1).addCollateral(2, toDecimals(500, 6))
+
+    const balance = (await usdc.balanceOf(user1.address));
+    expect(balance).to.eq('98579965527');
+
+    // Liquidation price for our short goes from $1285 to $1442
+    const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(2);
+    expect(shortLiquidationPrice).to.eq(144285760566);
+  });
+
+  it("partial close short position", async () => {
+    // We close half of our $3000 position with ETH at $1284, and we leave only 800$ as collateral
+    // Pnl resets to 0
+    await optionPerp.connect(user1).changePositionSize(2, toDecimals(1500, 8), toDecimals(800, 6), 0);
+
+    const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(3);
+    expect(shortLiquidationPrice).to.eq(192927421496); // ETH at $1929
+
+    const shortPositionValue = await optionPerp._getPositionValue(3);
+    expect(shortPositionValue).to.eq(1499999988); // $1500 of position value remaining
+
+    const pnl = await optionPerp._getPositionPnl(3);
+    expect(pnl).to.eq(12);
+  });
+
+  it("it is possible to reduce collateral", async () => {
+    // We reduce collateral of our position (too much)
+    await expect(optionPerp.connect(user1).reduceCollateral(3, toDecimals(900, 6))).to.be.revertedWith("Amount to withdraw is too big");
+
+    // We reduce collateral of a reasonable amount ($200)
+    await optionPerp.connect(user1).reduceCollateral(3, toDecimals(200, 6));
+
+    const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(3);
+    expect(shortLiquidationPrice).to.eq(176663533164); // Liquidation price decrases to $1766
+
+    let pnl = await optionPerp._getPositionPnl(3);
+    expect(pnl).to.eq(12); // PnL does not change
+
+    let shortPositionValue = await optionPerp._getPositionValue(3);
+    expect(shortPositionValue).to.eq(1499999988); // Position value does not change
+
+    await priceOracle.updateUnderlyingPrice("150000000000");
+
+    pnl = await optionPerp._getPositionPnl(3);
+    expect(pnl).to.eq(-252336435); // PnL goes to -$252
+
+    shortPositionValue = await optionPerp._getPositionValue(3);
+    expect(shortPositionValue).to.eq(1752336435); // Position value increases
   });
 });

@@ -218,6 +218,12 @@ contract OptionPerp is Ownable {
     address indexed sender
   );
 
+  event ReduceCollateralToPosition(
+    uint indexed id,
+    int amount,
+    address indexed sender
+  );
+
   event ClosePerpPosition(
     uint indexed id,
     int size,
@@ -510,7 +516,7 @@ contract OptionPerp is Ownable {
     bool _isShort,
     int _size, // in USD (1e8)
     int _collateralAmount // in USD (1e6) collateral used to cover premium + funding + fees and write option
-  ) external returns (uint id) {
+  ) public returns (uint id) {
     // Must not be epoch 0
     require(currentEpoch > 0, "Invalid epoch");
     // Check for expiry
@@ -608,6 +614,20 @@ contract OptionPerp is Ownable {
     );
   }
 
+  // Update position size maintaining same side, can be used to increase or decrease
+  function changePositionSize(
+    uint id,
+    int _size, // in USD (1e8)
+    int _collateralAmount, // in USD (1e6) collateral used to cover premium + funding + fees and write option
+    uint _minAmountOut // to avoid frontrunning
+  ) external returns (uint amountOut) {
+    bool isShort = perpPositions[id].isShort;
+    int originalSize = perpPositions[id].size;
+    amountOut = closePosition(id, _minAmountOut);
+
+    openPosition(isShort, _size, _collateralAmount);
+  }
+
   // Calculate premium for longing an ATM option
   function _calcPremium(
     int _strike,
@@ -674,6 +694,33 @@ contract OptionPerp is Ownable {
       _safeConvertToUint(collateralAmount)
     );
     emit AddCollateralToPosition(
+      id,
+      collateralAmount,
+      msg.sender
+    );
+  }
+
+  // Reduce collateral from an existing position
+  function reduceCollateral(
+    uint id,
+    int collateralAmount
+  ) external {
+    // Check if position is open
+    require(perpPositions[id].isOpen, "Position not open");
+    // Check if position is in current epoch
+    require(perpPositions[id].epoch == currentEpoch, "Invalid epoch");
+    epochLpData[currentEpoch][perpPositions[id].isShort].margin -= collateralAmount;
+    perpPositions[id].margin -= collateralAmount;
+
+    require(_isPositionCollateralized(id), "Amount to withdraw is too big");
+
+    // Move collateral
+    IERC20(quote).transfer(
+       msg.sender,
+      _safeConvertToUint(collateralAmount)
+    );
+
+    emit ReduceCollateralToPosition(
       id,
       collateralAmount,
       msg.sender
@@ -752,21 +799,19 @@ contract OptionPerp is Ownable {
   // Checks whether a position is sufficiently collateralized
   function _isPositionCollateralized(uint id)
   public
+  view
   returns (bool isCollateralized) {
     int pnl = _getPositionPnl(id);
-    if (pnl > 0) isCollateralized = true;
-    else {
-      int netMargin = _getPositionNetMargin(id);
-      netMargin -= netMargin * liquidationThreshold / (divisor * 100);
-      isCollateralized = netMargin + pnl >= 0;
-    }
+    int netMargin = _getPositionNetMargin(id);
+    netMargin -= netMargin * liquidationThreshold / (divisor * 100);
+    isCollateralized = netMargin + pnl >= 0;
   }
 
   // Close an existing position
   function closePosition(
     uint id,
     uint minAmountOut
-  ) external returns (uint amountOut) {
+  ) public returns (uint amountOut) {
     // Check if position is open
     require(perpPositions[id].isOpen, "Position not open");
     // Sender must be owner of position
@@ -782,11 +827,6 @@ contract OptionPerp is Ownable {
     bool isShort = perpPositions[id].isShort;
     // Calculate funding
     int funding = _getPositionFunding(id);
-
-    console.log('CLOSING');
-    console.log('FUNDING');
-    console.logInt(funding);
-
     // Calculate closing fees
     int closingFees = _calcFees(false, ((perpPositions[id].size / 10 ** 2) + pnl));
 
@@ -800,9 +840,6 @@ contract OptionPerp is Ownable {
       epochLpData[currentEpoch][isShort].positions;
 
     epochLpData[currentEpoch][isShort].positions -= perpPositions[id].positions;
-
-    // epochLpData[currentEpoch][isShort].longDelta -= (int)(perpPositions[id].size);
-    // epochLpData[currentEpoch][!isShort].shortDelta -= (int)(perpPositions[id].size);
 
     perpPositions[id].isOpen = false;
     perpPositions[id].pnl = pnl;
@@ -850,9 +887,6 @@ contract OptionPerp is Ownable {
     epochLpData[currentEpoch][isShort].averageOpenPrice  =
       epochLpData[currentEpoch][isShort].oi /
       epochLpData[currentEpoch][isShort].positions;
-
-    // epochLpData[currentEpoch][isShort].longDelta -= (int)(perpPositions[id].size);
-    // epochLpData[currentEpoch][!isShort].shortDelta -= (int)(perpPositions[id].size);
 
     perpPositions[id].isOpen = false;
     perpPositions[id].pnl = -1 * perpPositions[id].margin;
