@@ -345,8 +345,7 @@ contract OptionPerp is Ownable {
     bool isQuote,
     uint amountIn
   ) external {
-    uint nextEpoch = currentEpoch + 1;
-    epochLpData[nextEpoch][isQuote].totalDeposits += int(amountIn);
+    epochLpData[currentEpoch][isQuote].totalDeposits += int(amountIn);
     uint amountOut = _safeConvertToUint(_calcLpAmount(isQuote, int(amountIn)));
 
     if (isQuote) {
@@ -361,7 +360,7 @@ contract OptionPerp is Ownable {
       isQuote,
       amountIn,
       amountOut,
-      nextEpoch,
+      currentEpoch,
       msg.sender
     );
   }
@@ -424,11 +423,28 @@ contract OptionPerp is Ownable {
   view
   returns (int amountOut)
   {
-    // TODO: compute depositors pnl in quote or base
-    int pnl = 0;
-    int totalDeposits = epochLpData[currentEpoch][isQuote].totalDeposits + pnl;
-    if (totalDeposits == 0) amountOut = amountIn;
-    else amountOut = amountIn * _getTotalSupply(isQuote) / (totalDeposits - amountIn);
+    int currentPrice = _getMarkPrice();
+
+    // unrealizedPnl is ie6
+    int unrealizedPnl = ((currentPrice - epochLpData[currentEpoch][isQuote].averageOpenPrice) * (epochLpData[currentEpoch][isQuote].positions / 10 ** 2)) / divisor;
+
+    // totalDeposits is ie6
+    int deposits = epochLpData[currentEpoch][isQuote].totalDeposits - unrealizedPnl;
+
+    console.log('Total Deposits');
+    console.logInt(epochLpData[currentEpoch][isQuote].totalDeposits);
+
+    console.log('Unrealized pnl');
+    console.logInt(unrealizedPnl);
+
+    console.log('Deposits');
+    console.logInt(deposits);
+
+    console.log('Amount in');
+    console.logInt(amountIn);
+
+    if (deposits - amountIn == 0) amountOut = amountIn;
+    else amountOut = amountIn * _getTotalSupply(isQuote) / (deposits - amountIn);
   }
 
   // Expires an epoch and bootstraps the next epoch
@@ -741,8 +757,8 @@ contract OptionPerp is Ownable {
   view
   returns (int funding) {
     int markPrice = _getMarkPrice() / 10 ** 2;
-    int shortOiInUsd = epochLpData[currentEpoch][true].oi * markPrice / 10 ** 10;
-    int longOiInUsd = epochLpData[currentEpoch][false].oi * markPrice / 10 ** 10;
+    int shortOiInUsd = epochLpData[currentEpoch][true].oi * markPrice / divisor; // ie6
+    int longOiInUsd = epochLpData[currentEpoch][false].oi * markPrice / divisor; // ie6
 
     int fundingRate = minFundingRate;
 
@@ -756,6 +772,9 @@ contract OptionPerp is Ownable {
       fundingRate = perpPositions[id].isShort ? -1 * longFunding :  longFunding;
     }
 
+    // size is ie8
+    // margin is ie6
+    // _borrowed is ie6
     int _borrowed = perpPositions[id].size / 10 ** 2 - perpPositions[id].margin;
     funding = ((_borrowed * fundingRate / (divisor * 100)) * int(block.timestamp - perpPositions[id].openedAt)) / 365 days;
   }

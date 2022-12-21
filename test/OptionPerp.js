@@ -122,6 +122,12 @@ describe("Option Perp", function() {
     });
   });
 
+  it("should bootstrap successfully", async () => {
+    const oneWeekFromNow = getTime() + oneWeek;
+    await optionPerp.expireAndBootstrap(oneWeekFromNow);
+    expect(await optionPerp.currentEpoch()).equals(1);
+  });
+
   it("should not be able to deposit quote without sufficient usd balance", async () => {
     const amount = 10000 * 10 ** 6;
     await usdc.approve(optionPerp.address, MAX_UINT);
@@ -136,9 +142,7 @@ describe("Option Perp", function() {
     const amount = 10000 * 10 ** 6;
     await usdc.approve(optionPerp.address, MAX_UINT);
     await optionPerp.deposit(true, amount);
-    expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
-      amount
-    );
+
     const deposited = await quoteLpPositionMinter.balanceOf(owner.address);
 
     expect(deposited.toString()).equals(amount.toString());
@@ -158,9 +162,7 @@ describe("Option Perp", function() {
     const amount = (10 * 10 ** 18).toString();
     await weth.connect(owner).approve(optionPerp.address, MAX_UINT);
     await optionPerp.connect(owner).deposit(false, amount);
-    expect((await optionPerp.epochLpData(1, false)).totalDeposits).equals(
-      amount
-    );
+
     const deposited = await baseLpPositionMinter.balanceOf(owner.address);
 
     expect(deposited.toString()).equals(amount.toString());
@@ -170,18 +172,6 @@ describe("Option Perp", function() {
     const amount = (10 * 10 ** 6).toString();
     await quoteLpPositionMinter.approve(optionPerp.address, amount);
     await expect(optionPerp.connect(user1).withdraw(true, amount, 0)).to.be.revertedWith('Withdraws are not open');
-  });
-
-  it("should not be able to open position at epoch 0", async () => {
-    await expect(
-      optionPerp.connect(user1).openPosition(false, toDecimals(1000, 8), toDecimals(500, 6))
-    ).to.be.revertedWith("Invalid epoch");
-  });
-
-  it("should bootstrap successfully", async () => {
-    const oneWeekFromNow = getTime() + oneWeek;
-    await optionPerp.expireAndBootstrap(oneWeekFromNow);
-    expect(await optionPerp.currentEpoch()).equals(1);
   });
 
   it("should not bootstrap if current epoch hasn't expired", async () => {
@@ -248,21 +238,21 @@ describe("Option Perp", function() {
 
     // After hours we pay more funding
     amountOutAfterClosing = await optionPerp.connect(user1).callStatic.closePosition(0, 0);
-    expect(amountOutAfterClosing).to.gte('989965533');
+    expect(amountOutAfterClosing).to.gte('989965527');
 
     await optionPerp.connect(user1).closePosition(0, 0);
 
     const finalBalance = (await usdc.balanceOf(user1.address));
 
     // Initial balance was 100k
-    expect(finalBalance).to.eq('100489965527');
+    expect(finalBalance).to.eq('100489965521');
   });
 
   it("should open multiple position (short, long) successfully", async () => {
     await priceOracle.updateUnderlyingPrice("100000000000");
 
     const initialBalance = (await usdc.balanceOf(user1.address));
-    expect(initialBalance).to.eq('100489965527');
+    expect(initialBalance).to.eq('100489965521');
 
     console.log('Open long');
 
@@ -308,13 +298,13 @@ describe("Option Perp", function() {
 
   it("add collateral to improve liquidation price", async () => {
     const initialBalance = (await usdc.balanceOf(user1.address));
-    expect(initialBalance).to.eq('99079965527');
+    expect(initialBalance).to.eq('99079965521');
 
     // Deposit $500 more
     await optionPerp.connect(user1).addCollateral(2, toDecimals(500, 6))
 
     const balance = (await usdc.balanceOf(user1.address));
-    expect(balance).to.eq('98579965527');
+    expect(balance).to.eq('98579965521');
 
     // Liquidation price for our short goes from $1285 to $1442
     const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(2);
@@ -359,5 +349,23 @@ describe("Option Perp", function() {
 
     shortPositionValue = await optionPerp._getPositionValue(3);
     expect(shortPositionValue).to.eq(1752336435); // Position value increases
+  });
+
+  it("another user should be able to deposit", async () => {
+    await priceOracle.updateUnderlyingPrice("160000000000");
+
+    await usdc.connect(bf5).transfer(user2.address, "100000000000");
+
+    expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
+      "310852000000"
+    );
+
+    const amount = 10000 * 10 ** 6;
+    await usdc.connect(user2).approve(optionPerp.address, MAX_UINT);
+    await optionPerp.connect(user2).deposit(true, amount);
+
+    const deposited = await quoteLpPositionMinter.balanceOf(user2.address);
+
+    expect(deposited.toString()).equals("322078990");
   });
 });
