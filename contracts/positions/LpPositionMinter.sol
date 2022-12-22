@@ -28,4 +28,13 @@ contract LpPositionMinter is Ownable, ERC20PresetMinterPauser {
 
         _mint(receiver, amount);
     }
+
+    function burnFromOptionPerp(address sender, uint256 amount) public {
+        require(
+          msg.sender == optionPerpContract,
+          "Only option perp contract can burn deposit tokens"
+        );
+
+        _burn(sender, amount);
+    }
 }

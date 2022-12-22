@@ -142,10 +142,6 @@ contract OptionPerp is Ownable {
     int oi;
     // Price at expiry
     int expiryPrice;
-    // areWithdrawsOpen;
-    bool areWithdrawsOpen;
-    // areDepositsOpen;
-    bool areDepositsOpen;
   }
 
   struct PerpPosition {
@@ -269,8 +265,8 @@ contract OptionPerp is Ownable {
     address _priceOracle,
     address _gmxRouter,
     address _uniV3Router,
-    address _baseLpPositionMinter,
-    address _quoteLpPositionMinter
+    address _quoteLpPositionMinter,
+    address _baseLpPositionMinter
   ) {
     require(_base != address(0), "Invalid base token");
     require(_quote != address(0), "Invalid quote token");
@@ -285,8 +281,8 @@ contract OptionPerp is Ownable {
     uniV3Router = IUniswapV3Router(_uniV3Router);
     gmxRouter = IGmxRouter(_gmxRouter);
 
-    quoteLpPositionMinter = ILpPositionMinter(_baseLpPositionMinter);
-    baseLpPositionMinter = ILpPositionMinter(_quoteLpPositionMinter);
+    quoteLpPositionMinter = ILpPositionMinter(_quoteLpPositionMinter);
+    baseLpPositionMinter = ILpPositionMinter(_baseLpPositionMinter);
     perpPositionMinter = new PerpPositionMinter();
 
     base.approve(_gmxRouter, MAX_UINT);
@@ -378,31 +374,43 @@ contract OptionPerp is Ownable {
     int minAmountOut
   ) external returns (int amountOut)
   {
-    // Burn lp tokens in exchange of the equivalent share of the reserves
-    // Lp tokens remaining will be rolled over
-    require(epochData[currentEpoch].areWithdrawsOpen == true, "Withdraws are not open");
+    int available = epochLpData[currentEpoch][isQuote].totalDeposits - epochLpData[currentEpoch][isQuote].activeDeposits;
 
-    // TODO: compute reserves
-    int available;
+    int totalSupply = _getTotalSupply(isQuote);
 
     if (isQuote) {
-      available = 0;
+      quoteLpPositionMinter.burnFromOptionPerp(msg.sender, _safeConvertToUint(amountIn));
 
-      quoteLpPositionMinter.transferFrom(msg.sender, address(this), _safeConvertToUint(amountIn));
-      quoteLpPositionMinter.burn(_safeConvertToUint(amountIn));
+      console.log('IS QUOTE');
+      console.log('AMOUNT IN');
+      console.logInt(amountIn);
+      console.log('AVAILABLE');
+      console.logInt(available);
+      console.log('TOTAL SUPPLY');
+      console.logInt(_getTotalSupply(isQuote));
 
-      amountOut = (amountIn * available) / _getTotalSupply(isQuote);
+      amountOut = (amountIn * epochLpData[currentEpoch][isQuote].totalDeposits) / totalSupply;
+      require(amountOut <= available, "Insufficient liquidity");
       quote.transfer(msg.sender, _safeConvertToUint(amountOut));
     } else {
-      available = 1;
-      baseLpPositionMinter.transferFrom(msg.sender, address(this), _safeConvertToUint(amountIn));
-      quoteLpPositionMinter.burn(_safeConvertToUint(amountIn));
+      baseLpPositionMinter.burnFromOptionPerp(msg.sender, _safeConvertToUint(amountIn));
 
-      amountOut = (amountIn * available) / _getTotalSupply(isQuote);
+      console.log('AMOUNT IN');
+      console.logInt(amountIn);
+      console.log('AVAILABLE');
+      console.logInt(available);
+      console.log('TOTAL SUPPLY');
+      console.logInt(_getTotalSupply(isQuote));
+
+      amountOut = (amountIn * epochLpData[currentEpoch][isQuote].totalDeposits) / totalSupply;
+      require(amountOut <= available, "Insufficient liquidity");
       base.transfer(msg.sender, _safeConvertToUint(amountOut));
     }
 
     require(amountOut >= minAmountOut, "Insufficient amount out");
+
+    console.log('AMOUNT OUT');
+    console.logInt(amountOut);
 
     emit Withdraw(
       amountIn,
