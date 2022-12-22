@@ -78,9 +78,13 @@ contract OptionPerp is Ownable {
   IUniswapV3Router public uniV3Router;
   
   int public expiry;
+  int public epoch;
 
   mapping (bool => EpochLPData) public epochLpData;
   mapping (uint => PerpPosition) public perpPositions;
+
+  // epoch => expiryPrice
+  mapping (int => int) public expiryPrices;
 
   int public divisor                = 1e8;
   int public minFundingRate         = 3650000000; // 36.5% annualized (0.1% a day)
@@ -424,14 +428,17 @@ contract OptionPerp is Ownable {
     console.logInt(amountOut);
   }
 
-  // Update expiry
-  function updateExpiry(
+  // Update expiry and epoch
+  function updateEpoch(
     int nextExpiryTimestamp
   )
   external
   onlyOwner {
-    
-    
+    require(int(block.timestamp) <= expiry, "Too soon");
+
+    expiry = nextExpiryTimestamp;
+    expiryPrices[epoch] = _getMarkPrice();
+    epoch += 1;
   }
 
   // Open a new position
@@ -826,5 +833,4 @@ contract OptionPerp is Ownable {
       msg.sender
     );
   }
-
 }
