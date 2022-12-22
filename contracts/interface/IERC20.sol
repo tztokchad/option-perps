@@ -80,5 +80,5 @@ interface IERC20 {
         uint256 amount
     ) external returns (bool);
 
-    function decimals() external returns (uint8);
+    function decimals() external view returns (uint8);
 }
