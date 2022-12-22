@@ -87,7 +87,8 @@ describe("Option Perp", function() {
       "0xaBBc5F99639c9B6bCb58544ddf04EFA6802F4064", // GMX
       "0xE592427A0AEce92De3Edee1F18E0157C05861564", // UNI V3
       quoteLpPositionMinter.address,
-      baseLpPositionMinter.address
+      baseLpPositionMinter.address,
+      getTime() + oneWeek
     );
     console.log("deployed option perp:", optionPerp.address);
     await quoteLpPositionMinter.setOptionPerpContract(optionPerp.address);
@@ -120,12 +121,6 @@ describe("Option Perp", function() {
       to: user1.address,
       value: ethers.utils.parseEther("100.0")
     });
-  });
-
-  it("should bootstrap successfully", async () => {
-    const oneWeekFromNow = getTime() + oneWeek;
-    await optionPerp.expireAndBootstrap(oneWeekFromNow);
-    expect(await optionPerp.currentEpoch()).equals(1);
   });
 
   it("should not be able to deposit quote without sufficient usd balance", async () => {
@@ -167,17 +162,8 @@ describe("Option Perp", function() {
 
     expect(deposited.toString()).equals(amount.toString());
 
-    expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
+    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
       "10000000000"
-    );
-  });
-
-  it("should not bootstrap if current epoch hasn't expired", async () => {
-    const oneWeekFromNow = getTime() + oneWeek;
-    await expect(
-      optionPerp.expireAndBootstrap(oneWeekFromNow)
-    ).to.be.revertedWith(
-      "Cannot bootstrap before the current epoch was expired"
     );
   });
 
@@ -221,7 +207,7 @@ describe("Option Perp", function() {
       initialBalance.sub(toDecimals(500, 6))
     );
 
-    expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
+    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
       "10000000000" // TOTAL DEPOSITS DONT CHANGE
     );
   });
@@ -240,16 +226,16 @@ describe("Option Perp", function() {
 
     // After hours we pay more funding
     amountOutAfterClosing = await optionPerp.connect(user1).callStatic.closePosition(0, 0);
-    expect(amountOutAfterClosing).to.gte('989965516');
+    expect(amountOutAfterClosing).to.gte('989965504');
 
     await optionPerp.connect(user1).closePosition(0, 0);
 
     const finalBalance = (await usdc.balanceOf(user1.address));
 
     // Initial balance was 100k
-    expect(finalBalance).to.eq('100489965510');
+    expect(finalBalance).to.eq('100489965498');
 
-    expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
+    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
       "10000000000" // TOTAL DEPOSITS DONT CHANGE
     );
   });
@@ -258,7 +244,7 @@ describe("Option Perp", function() {
     await priceOracle.updateUnderlyingPrice("100000000000");
 
     const initialBalance = (await usdc.balanceOf(user1.address));
-    expect(initialBalance).to.eq('100489965510');
+    expect(initialBalance).to.eq('100489965498');
 
     console.log('Open long');
 
@@ -275,7 +261,7 @@ describe("Option Perp", function() {
     // We open a long of $1000 with $500 of collateral (lev 2x)
     // We open a short of $3000 with $910 of collateral (lev 3.29x)
 
-    expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
+    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
       "10000000000" // TOTAL DEPOSITS DONT CHANGE
     );
   });
@@ -308,19 +294,19 @@ describe("Option Perp", function() {
 
   it("add collateral to improve liquidation price", async () => {
     const initialBalance = (await usdc.balanceOf(user1.address));
-    expect(initialBalance).to.eq('99079965510');
+    expect(initialBalance).to.eq('99079965498');
 
     // Deposit $500 more
     await optionPerp.connect(user1).addCollateral(2, toDecimals(500, 6))
 
     const balance = (await usdc.balanceOf(user1.address));
-    expect(balance).to.eq('98579965510');
+    expect(balance).to.eq('98579965498');
 
     // Liquidation price for our short goes from $1285 to $1442
     const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(2);
     expect(shortLiquidationPrice).to.eq(144285760566);
 
-    expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
+    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
       "10000000000" // TOTAL DEPOSITS DONT CHANGE
     );
   });
@@ -339,7 +325,7 @@ describe("Option Perp", function() {
     const pnl = await optionPerp._getPositionPnl(3);
     expect(pnl).to.eq(12);
 
-    expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
+    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
       "10847001691" // TOTAL DEPOSITS CHANGE AS LP ACQUIRE -PNL FUNDING AND FEES
     );
   });
@@ -368,7 +354,7 @@ describe("Option Perp", function() {
     shortPositionValue = await optionPerp._getPositionValue(3);
     expect(shortPositionValue).to.eq(1752336435); // Position value increases
 
-    expect((await optionPerp.epochLpData(1, true)).totalDeposits).equals(
+    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
       "10847001691" // TOTAL DEPOSITS CHANGE AS LP ACQUIRE -PNL FUNDING AND FEES
     );
   });
