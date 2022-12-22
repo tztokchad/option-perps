@@ -345,8 +345,14 @@ contract OptionPerp is Ownable {
     bool isQuote,
     uint amountIn
   ) external {
-    epochLpData[currentEpoch][isQuote].totalDeposits += int(amountIn);
     uint amountOut = _safeConvertToUint(_calcLpAmount(isQuote, int(amountIn)));
+    epochLpData[currentEpoch][isQuote].totalDeposits += int(amountIn);
+
+    console.log('TOTAL DEPOSIT NOW');
+    console.logInt(epochLpData[currentEpoch][isQuote].totalDeposits);
+
+    console.log("AMOUNT OUT");
+    console.log(amountOut);
 
     if (isQuote) {
       quote.transferFrom(msg.sender, address(this), amountIn);
@@ -443,8 +449,14 @@ contract OptionPerp is Ownable {
     console.log('Amount in');
     console.logInt(amountIn);
 
-    if (deposits - amountIn == 0) amountOut = amountIn;
-    else amountOut = amountIn * _getTotalSupply(isQuote) / (deposits - amountIn);
+    console.log('Total supply');
+    console.logInt(_getTotalSupply(isQuote));
+
+    if (deposits == 0) amountOut = amountIn;
+    else amountOut = (amountIn * _getTotalSupply(isQuote)) / (epochLpData[currentEpoch][isQuote].totalDeposits);
+
+    console.log('Amount out');
+    console.logInt(amountOut);
   }
 
   // Expires an epoch and bootstraps the next epoch
@@ -581,7 +593,7 @@ contract OptionPerp is Ownable {
     epochLpData[currentEpoch][_isShort].oi                += _size;
     epochLpData[currentEpoch][_isShort].premium           += premium;
     epochLpData[currentEpoch][_isShort].openingFees       += openingFees;
-    epochLpData[currentEpoch][_isShort].activeDeposits    += _size;
+    epochLpData[currentEpoch][_isShort].activeDeposits    += _size / 10 ** 2;
     epochLpData[currentEpoch][_isShort].positions         += positions;
 
     // epochLpData[currentEpoch][_isShort].longDelta   += (int)(size);
@@ -850,8 +862,11 @@ contract OptionPerp is Ownable {
     int closingFees = _calcFees(false, ((perpPositions[id].size / 10 ** 2) + pnl));
 
     epochLpData[currentEpoch][isShort].margin -= perpPositions[id].margin;
-    epochLpData[currentEpoch][isShort].activeDeposits -= perpPositions[id].size;
-    epochLpData[currentEpoch][isShort].totalDeposits += perpPositions[id].size - pnl;
+    epochLpData[currentEpoch][isShort].activeDeposits -= perpPositions[id].size / 10 ** 2;
+
+    console.logInt(epochLpData[currentEpoch][isShort].totalDeposits);
+    epochLpData[currentEpoch][isShort].totalDeposits += - pnl + funding + closingFees;
+
     epochLpData[currentEpoch][isShort].oi -= perpPositions[id].size;
 
     epochLpData[currentEpoch][isShort].averageOpenPrice  =
