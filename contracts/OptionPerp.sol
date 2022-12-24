@@ -8,6 +8,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {PerpPositionMinter} from "./positions/PerpPositionMinter.sol";
+import {OptionPositionMinter} from "./positions/OptionPositionMinter.sol";
 
 import {IOptionPricing} from "./interface/IOptionPricing.sol";
 import {IVolatilityOracle} from "./interface/IVolatilityOracle.sol";
@@ -73,6 +74,7 @@ contract OptionPerp is Ownable {
   ILpPositionMinter public quoteLpPositionMinter;
   ILpPositionMinter public baseLpPositionMinter;
   PerpPositionMinter public perpPositionMinter;
+  OptionPositionMinter public optionPositionMinter;
 
   IGmxRouter public gmxRouter;
   IUniswapV3Router public uniV3Router;
@@ -82,6 +84,7 @@ contract OptionPerp is Ownable {
 
   mapping (bool => EpochLPData) public epochLpData;
   mapping (uint => PerpPosition) public perpPositions;
+  mapping (uint => OptionPosition) public optionPositions;
 
   // epoch => expiryPrice
   mapping (int => int) public expiryPrices;
@@ -157,10 +160,19 @@ contract OptionPerp is Ownable {
     int funding;
     // Final PNL of position
     int pnl;
-    // Owner of perp position
-    address owner;
     // Opened at timestamp
     uint openedAt;
+  }
+
+  struct OptionPosition {
+    // Is position open
+    bool isOpen;
+    // Is put
+    bool isPut;
+    // Total amount
+    int amount;
+    // Strike price
+    int strike;
   }
 
   event Deposit(
@@ -246,6 +258,7 @@ contract OptionPerp is Ownable {
     quoteLpPositionMinter = ILpPositionMinter(_quoteLpPositionMinter);
     baseLpPositionMinter = ILpPositionMinter(_baseLpPositionMinter);
     perpPositionMinter = new PerpPositionMinter();
+    optionPositionMinter = new OptionPositionMinter();
 
     base.approve(_gmxRouter, MAX_UINT);
     base.approve(_uniV3Router, MAX_UINT);
@@ -527,7 +540,6 @@ contract OptionPerp is Ownable {
       closingFees: 0,
       funding: 0,
       pnl: 0,
-      owner: msg.sender,
       openedAt: block.timestamp
     });
 
@@ -741,7 +753,7 @@ contract OptionPerp is Ownable {
     // Check if position is open
     require(perpPositions[id].isOpen, "Position not open");
     // Sender must be owner of position
-    require(perpPositions[id].owner == msg.sender, "Invalid sender");
+    require(perpPositionMinter.ownerOf(id) == msg.sender, "Invalid sender");
     // Position must be sufficiently collateralized
     require(_isPositionCollateralized(id), "Position is not collateralized");
 
@@ -784,7 +796,7 @@ contract OptionPerp is Ownable {
         _swapUsingUniV3ExactOut(address(base), address(quote), amountOut, MAX_UINT, 500);
       }
 
-      quote.transfer(perpPositions[id].owner, amountOut);
+      quote.transfer(perpPositionMinter.ownerOf(id), amountOut);
     }
 
     emit ClosePerpPosition(
@@ -824,6 +836,16 @@ contract OptionPerp is Ownable {
         msg.sender,
         _safeConvertToUint(liquidationFee)
       );
+
+    // Mint option for liquidated user
+    // PUT if isShort, CALL if not
+    id = optionPositionMinter.mint(optionPositionMinter.ownerOf(id));
+    optionPositions[id] = OptionPosition({
+      isOpen: true,
+      isPut: isShort,
+      amount: perpPositions[id].size,
+      strike: perpPositions[id].averageOpenPrice
+    });
 
     emit LiquidatePosition(
       id,
