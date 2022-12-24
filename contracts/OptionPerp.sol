@@ -843,7 +843,7 @@ contract OptionPerp is Ownable {
     optionPositions[id] = OptionPosition({
       isOpen: true,
       isPut: isShort,
-      amount: perpPositions[id].size,
+      amount: perpPositions[id].positions,
       strike: perpPositions[id].averageOpenPrice
     });
 
