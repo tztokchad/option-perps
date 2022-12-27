@@ -14,6 +14,7 @@ describe("Option Perp", function() {
   let quoteLpPositionMinter;
   let baseLpPositionMinter;
   let perpPositionMinter;
+  let optionPositionMinter;
   let optionPerp;
   let b50;
   let bf5;
@@ -76,6 +77,11 @@ describe("Option Perp", function() {
       "PerpPositionMinter"
     );
     perpPositionMinter = await PerpPositionMinter.deploy();
+    // Option position minter
+    const OptionPositionMinter = await ethers.getContractFactory(
+      "OptionPositionMinter"
+    );
+    optionPositionMinter = await OptionPositionMinter.deploy();
     // Option Perp
     const OptionPerp = await ethers.getContractFactory("OptionPerp");
     optionPerp = await OptionPerp.deploy(
@@ -94,6 +100,7 @@ describe("Option Perp", function() {
     await quoteLpPositionMinter.setOptionPerpContract(optionPerp.address);
     await baseLpPositionMinter.setOptionPerpContract(optionPerp.address);
     await perpPositionMinter.setOptionPerpContract(optionPerp.address);
+    await optionPositionMinter.setOptionPerpContract(optionPerp.address);
 
     // Transfer USDC and WETH to our address from another impersonated address
     await network.provider.request({
@@ -233,7 +240,7 @@ describe("Option Perp", function() {
     const finalBalance = (await usdc.balanceOf(user1.address));
 
     // Initial balance was 100k
-    expect(finalBalance).to.eq('100489965498');
+    expect(finalBalance).to.eq('100489965510');
 
     expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
       "10000000000" // TOTAL DEPOSITS DONT CHANGE
@@ -244,7 +251,7 @@ describe("Option Perp", function() {
     await priceOracle.updateUnderlyingPrice("100000000000");
 
     const initialBalance = (await usdc.balanceOf(user1.address));
-    expect(initialBalance).to.eq('100489965498');
+    expect(initialBalance).to.eq('100489965510');
 
     console.log('Open long');
 
@@ -294,13 +301,13 @@ describe("Option Perp", function() {
 
   it("add collateral to improve liquidation price", async () => {
     const initialBalance = (await usdc.balanceOf(user1.address));
-    expect(initialBalance).to.eq('99079965498');
+    expect(initialBalance).to.eq('99079965510');
 
     // Deposit $500 more
     await optionPerp.connect(user1).addCollateral(2, toDecimals(500, 6))
 
     const balance = (await usdc.balanceOf(user1.address));
-    expect(balance).to.eq('98579965498');
+    expect(balance).to.eq('98579965510');
 
     // Liquidation price for our short goes from $1285 to $1442
     const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(2);
