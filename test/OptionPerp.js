@@ -442,7 +442,7 @@ describe("Option Perp", function() {
       value: ethers.utils.parseEther("100.0")
     });
 
-    await optionPerp.connect(user3).completeWithdrawalRequest(0);
+    await optionPerp.connect(user3).completeWithdrawalRequest(1);
 
     const feesObtainedByBot = await usdc.balanceOf(user3.address);
     expect(feesObtainedByBot).to.eq(priorityFees);

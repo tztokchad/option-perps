@@ -363,68 +363,13 @@ contract OptionPerp is Ownable {
     );
   }
 
-  // Withdraw
-  function withdraw(
-    bool isQuote,
-    int amountIn,
-    int minAmountOut
-  ) external returns (int amountOut)
-  {
-    int available = epochLpData[isQuote].totalDeposits - epochLpData[isQuote].activeDeposits;
-
-    int totalSupply = _getTotalSupply(isQuote);
-
-    if (isQuote) {
-      quoteLpPositionMinter.burnFromOptionPerp(msg.sender, _safeConvertToUint(amountIn));
-
-      console.log('IS QUOTE');
-      console.log('AMOUNT IN');
-      console.logInt(amountIn);
-      console.log('AVAILABLE');
-      console.logInt(available);
-      console.log('TOTAL SUPPLY');
-      console.logInt(_getTotalSupply(isQuote));
-
-      amountOut = (amountIn * epochLpData[isQuote].totalDeposits) / totalSupply;
-      require(amountOut <= available, "Insufficient liquidity");
-      quote.transfer(msg.sender, _safeConvertToUint(amountOut));
-    } else {
-      baseLpPositionMinter.burnFromOptionPerp(msg.sender, _safeConvertToUint(amountIn));
-
-      console.log('AMOUNT IN');
-      console.logInt(amountIn);
-      console.log('AVAILABLE');
-      console.logInt(available);
-      console.log('TOTAL SUPPLY');
-      console.logInt(_getTotalSupply(isQuote));
-
-      amountOut = (amountIn * epochLpData[isQuote].totalDeposits) / totalSupply;
-      require(amountOut <= available, "Insufficient liquidity");
-      base.transfer(msg.sender, _safeConvertToUint(amountOut));
-    }
-
-    require(amountOut >= minAmountOut, "Insufficient amount out");
-
-    console.log('AMOUNT OUT');
-    console.logInt(amountOut);
-
-    emit Withdraw(
-      amountIn,
-      amountOut,
-      isQuote,
-      0,
-      msg.sender,
-      msg.sender
-    );
-  }
-
   // Initiate withdrawal request
   function openWithdrawalRequest(
     bool isQuote,
     int amountIn,
     int minAmountOut,
     int priorityFee
-  ) external
+  ) public returns (uint id)
   {
     uint lpAmount;
 
@@ -459,21 +404,25 @@ contract OptionPerp is Ownable {
     );
 
     withdrawalRequestsCounter += 1;
+
+    id = withdrawalRequestsCounter - 1;
+
+    console.log('ID TO WITHDRAW');
+    console.log(id);
   }
 
   // Fulfill withdrawal request
   function completeWithdrawalRequest(
     uint id
-  ) external
+  ) public returns (int amountOut, int amountOutFees)
   {
     PendingWithdrawal memory pendingWithdrawal = pendingWithdrawals[id];
+
+    require(pendingWithdrawal.user != address(0), "Invalid id");
 
     int available = epochLpData[pendingWithdrawal.isQuote].totalDeposits - epochLpData[pendingWithdrawal.isQuote].activeDeposits;
 
     int totalSupply = _getTotalSupply(pendingWithdrawal.isQuote);
-
-    int amountOut;
-    int amountOutFees;
 
     console.log("AMOUNT TO BURN");
     console.logInt(pendingWithdrawal.amountIn);
@@ -516,6 +465,8 @@ contract OptionPerp is Ownable {
     console.log('AMOUNT OUT');
     console.logInt(amountOut);
 
+    amountOutFees = pendingWithdrawal.priorityFee;
+
     delete pendingWithdrawals[id];
 
     emit Withdraw(
@@ -526,6 +477,17 @@ contract OptionPerp is Ownable {
       msg.sender,
       pendingWithdrawal.user
     );
+  }
+
+  // Open withdrawal request and fullfill it immediately
+  function withdraw(
+    bool isQuote,
+    int amountIn,
+    int minAmountOut
+  ) external returns (int amountOut)
+  {
+    uint id = openWithdrawalRequest(isQuote, amountIn, minAmountOut, 0);
+    (amountOut, ) = completeWithdrawalRequest(id);
   }
 
   // Safe convert to uint without overflow
