@@ -87,7 +87,7 @@ contract OptionPerp is Ownable {
   mapping (bool => EpochLPData) public epochLpData;
   mapping (uint => PerpPosition) public perpPositions;
   mapping (uint => OptionPosition) public optionPositions;
-  mapping (uint => WithdrawalRequest) public withdrawalRequests;
+  mapping (uint => PendingWithdrawal) public pendingWithdrawals;
 
   // epoch => expiryPrice
   mapping (int => int) public expiryPrices;
@@ -167,7 +167,7 @@ contract OptionPerp is Ownable {
     uint openedAt;
   }
 
-  struct WithdrawalRequest {
+  struct PendingWithdrawal {
     // lp token amount
     int amountIn;
     // min amount of underlying token accepted after fees
@@ -242,7 +242,7 @@ contract OptionPerp is Ownable {
     address indexed user
   );
 
-   event PendingWithdraw(
+   event RequestWithdraw(
     uint indexed id,
     int amountIn,
     bool isQuote,
@@ -436,7 +436,7 @@ contract OptionPerp is Ownable {
 
     require(lpAmount >= _safeConvertToUint(amountIn + priorityFee), "Insufficient LP token amount");
 
-    withdrawalRequests[withdrawalRequestsCounter] = WithdrawalRequest({
+    pendingWithdrawals[withdrawalRequestsCounter] = PendingWithdrawal({
       amountIn: amountIn,
       minAmountOut: minAmountOut,
       isQuote: isQuote,
@@ -444,7 +444,7 @@ contract OptionPerp is Ownable {
       user: msg.sender
     });
 
-    emit PendingWithdraw(
+    emit RequestWithdraw(
       withdrawalRequestsCounter,
       amountIn,
       isQuote,
@@ -461,64 +461,66 @@ contract OptionPerp is Ownable {
     uint id
   ) external
   {
-    WithdrawalRequest memory withdrawalRequest = withdrawalRequests[id];
+    PendingWithdrawal memory pendingWithdrawal = pendingWithdrawals[id];
 
-    int available = epochLpData[withdrawalRequest.isQuote].totalDeposits - epochLpData[withdrawalRequest.isQuote].activeDeposits;
+    int available = epochLpData[pendingWithdrawal.isQuote].totalDeposits - epochLpData[pendingWithdrawal.isQuote].activeDeposits;
 
-    int totalSupply = _getTotalSupply(withdrawalRequest.isQuote);
+    int totalSupply = _getTotalSupply(pendingWithdrawal.isQuote);
 
     int amountOut;
     int amountOutFees;
 
-    if (withdrawalRequest.isQuote) {
-      quoteLpPositionMinter.burnFromOptionPerp(msg.sender, _safeConvertToUint(withdrawalRequest.amountIn));
+    if (pendingWithdrawal.isQuote) {
+      quoteLpPositionMinter.burnFromOptionPerp(msg.sender, _safeConvertToUint(pendingWithdrawal.amountIn));
 
       console.log('IS QUOTE');
       console.log('AMOUNT IN');
-      console.logInt(withdrawalRequest.amountIn);
+      console.logInt(pendingWithdrawal.amountIn);
       console.log('AVAILABLE');
       console.logInt(available);
       console.log('TOTAL SUPPLY');
-      console.logInt(_getTotalSupply(withdrawalRequest.isQuote));
+      console.logInt(_getTotalSupply(pendingWithdrawal.isQuote));
 
-      amountOut = (withdrawalRequest.amountIn * epochLpData[withdrawalRequest.isQuote].totalDeposits) / totalSupply;
+      amountOut = (pendingWithdrawal.amountIn * epochLpData[pendingWithdrawal.isQuote].totalDeposits) / totalSupply;
       require(amountOut <= available, "Insufficient liquidity");
 
-      amountOutFees = amountOut * withdrawalRequest.priorityFee / divisor;
+      amountOutFees = amountOut * pendingWithdrawal.priorityFee / divisor;
 
-      quote.transfer(withdrawalRequest.user, _safeConvertToUint(amountOut - amountOutFees));
+      quote.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - amountOutFees));
       quote.transfer(msg.sender, _safeConvertToUint(amountOutFees));
     } else {
-      baseLpPositionMinter.burnFromOptionPerp(msg.sender, _safeConvertToUint(withdrawalRequest.amountIn));
+      baseLpPositionMinter.burnFromOptionPerp(msg.sender, _safeConvertToUint(pendingWithdrawal.amountIn));
 
       console.log('AMOUNT IN');
-      console.logInt(withdrawalRequest.amountIn);
+      console.logInt(pendingWithdrawal.amountIn);
       console.log('AVAILABLE');
       console.logInt(available);
       console.log('TOTAL SUPPLY');
-      console.logInt(_getTotalSupply(withdrawalRequest.isQuote));
+      console.logInt(_getTotalSupply(pendingWithdrawal.isQuote));
 
-      amountOut = (withdrawalRequest.amountIn * epochLpData[withdrawalRequest.isQuote].totalDeposits) / totalSupply;
+      amountOut = (pendingWithdrawal.amountIn * epochLpData[pendingWithdrawal.isQuote].totalDeposits) / totalSupply;
       require(amountOut <= available, "Insufficient liquidity");
 
-      amountOutFees = amountOut * withdrawalRequest.priorityFee / divisor;
+      amountOutFees = amountOut * pendingWithdrawal.priorityFee / divisor;
 
-      base.transfer(withdrawalRequest.user, _safeConvertToUint(amountOut - amountOutFees));
+      base.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - amountOutFees));
       base.transfer(msg.sender, _safeConvertToUint(amountOutFees));
     }
 
-    require(amountOut >= withdrawalRequest.minAmountOut, "Insufficient amount out");
+    require(amountOut >= pendingWithdrawal.minAmountOut, "Insufficient amount out");
 
     console.log('AMOUNT OUT');
     console.logInt(amountOut);
 
+    delete pendingWithdrawals[id];
+
     emit Withdraw(
-      withdrawalRequest.amountIn,
+      pendingWithdrawal.amountIn,
       amountOut - amountOutFees,
-      withdrawalRequest.isQuote,
+      pendingWithdrawal.isQuote,
       amountOutFees,
       msg.sender,
-      withdrawalRequest.user
+      pendingWithdrawal.user
     );
   }
 
