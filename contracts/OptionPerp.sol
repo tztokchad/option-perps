@@ -434,7 +434,12 @@ contract OptionPerp is Ownable {
       lpAmount = baseLpPositionMinter.balanceOf(msg.sender);
     }
 
-    require(lpAmount >= _safeConvertToUint(amountIn + priorityFee), "Insufficient LP token amount");
+    require(lpAmount >= _safeConvertToUint(amountIn), "Insufficient LP token amount");
+
+    console.log("LP AMOUNT");
+    console.log(lpAmount);
+    console.log("AMOUNT IN");
+    console.logInt(amountIn);
 
     pendingWithdrawals[withdrawalRequestsCounter] = PendingWithdrawal({
       amountIn: amountIn,
@@ -470,8 +475,11 @@ contract OptionPerp is Ownable {
     int amountOut;
     int amountOutFees;
 
+    console.log("AMOUNT TO BURN");
+    console.logInt(pendingWithdrawal.amountIn);
+
     if (pendingWithdrawal.isQuote) {
-      quoteLpPositionMinter.burnFromOptionPerp(msg.sender, _safeConvertToUint(pendingWithdrawal.amountIn));
+      quoteLpPositionMinter.burnFromOptionPerp(pendingWithdrawal.user, _safeConvertToUint(pendingWithdrawal.amountIn));
 
       console.log('IS QUOTE');
       console.log('AMOUNT IN');
@@ -484,12 +492,10 @@ contract OptionPerp is Ownable {
       amountOut = (pendingWithdrawal.amountIn * epochLpData[pendingWithdrawal.isQuote].totalDeposits) / totalSupply;
       require(amountOut <= available, "Insufficient liquidity");
 
-      amountOutFees = amountOut * pendingWithdrawal.priorityFee / divisor;
-
-      quote.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - amountOutFees));
-      quote.transfer(msg.sender, _safeConvertToUint(amountOutFees));
+      quote.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - pendingWithdrawal.priorityFee));
+      quote.transfer(msg.sender, _safeConvertToUint(pendingWithdrawal.priorityFee));
     } else {
-      baseLpPositionMinter.burnFromOptionPerp(msg.sender, _safeConvertToUint(pendingWithdrawal.amountIn));
+      baseLpPositionMinter.burnFromOptionPerp(pendingWithdrawal.user, _safeConvertToUint(pendingWithdrawal.amountIn));
 
       console.log('AMOUNT IN');
       console.logInt(pendingWithdrawal.amountIn);
@@ -501,13 +507,11 @@ contract OptionPerp is Ownable {
       amountOut = (pendingWithdrawal.amountIn * epochLpData[pendingWithdrawal.isQuote].totalDeposits) / totalSupply;
       require(amountOut <= available, "Insufficient liquidity");
 
-      amountOutFees = amountOut * pendingWithdrawal.priorityFee / divisor;
-
-      base.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - amountOutFees));
-      base.transfer(msg.sender, _safeConvertToUint(amountOutFees));
+      base.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - pendingWithdrawal.priorityFee));
+      base.transfer(msg.sender, _safeConvertToUint(pendingWithdrawal.priorityFee));
     }
 
-    require(amountOut >= pendingWithdrawal.minAmountOut, "Insufficient amount out");
+    require(amountOut - pendingWithdrawal.priorityFee >= pendingWithdrawal.minAmountOut, "Insufficient amount out");
 
     console.log('AMOUNT OUT');
     console.logInt(amountOut);
@@ -516,9 +520,9 @@ contract OptionPerp is Ownable {
 
     emit Withdraw(
       pendingWithdrawal.amountIn,
-      amountOut - amountOutFees,
+      amountOut - pendingWithdrawal.priorityFee,
       pendingWithdrawal.isQuote,
-      amountOutFees,
+      pendingWithdrawal.priorityFee,
       msg.sender,
       pendingWithdrawal.user
     );
