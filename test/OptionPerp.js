@@ -48,6 +48,7 @@ describe("Option Perp", function() {
     user0 = signers[1];
     user1 = signers[2];
     user2 = signers[3];
+    user3 = signers[4];
   });
 
   it("should deploy option perp", async function() {
@@ -380,14 +381,14 @@ describe("Option Perp", function() {
     await usdc.connect(user2).approve(optionPerp.address, MAX_UINT);
     await optionPerp.connect(user2).deposit(true, amount);
 
-    const deposited = await quoteLpPositionMinter.balanceOf(user2.address);
+    const lpTokenAmount = await quoteLpPositionMinter.balanceOf(user2.address);
 
     // After this user deposits there will be 10847 + 10000 = 20847
     // We'll have (amountIn * _getTotalSupply(isQuote)) / (epochLpData[currentEpoch][isQuote].totalDeposits) =
     // = (10000 * 10000) / (10847001691) = adjusting decimals is 9219.37 LP tokens
     // 369.158784 is unrealized pnl of traders
 
-    expect(deposited.toString()).equals("9219137495");
+    expect(lpTokenAmount.toString()).equals("9219137495");
 
     const totalSupply = await quoteLpPositionMinter.totalSupply();
 
@@ -398,9 +399,56 @@ describe("Option Perp", function() {
     // 9219137495 / 19219137495 = 0.4796%
 
     // Test withdraw to see if we can get back our 10000 USDC burning 9219.37 LP tokens
-    await optionPerp.connect(user2).withdraw(true, deposited, 0);
+    await optionPerp.connect(user2).withdraw(true, lpTokenAmount, 0);
 
     const finalBalance = (await usdc.balanceOf(user2.address));
     expect(finalBalance).to.eq('9999999999');
+  });
+
+  it("another user should be able to deposit and request withdraw, a bot should be able to fullfill it", async () => {
+    const initialBalance = (await usdc.balanceOf(user2.address));
+    expect(initialBalance).to.eq('9999999999');
+
+    // Another user deposited 5k
+
+    const amount = 5000 * 10 ** 6;
+    await usdc.connect(user2).approve(optionPerp.address, MAX_UINT);
+    await optionPerp.connect(user2).deposit(true, amount);
+
+    const lpTokenAmount = await quoteLpPositionMinter.balanceOf(user2.address);
+
+    expect(lpTokenAmount.toString()).equals("2398426437");
+
+    const totalSupply = await quoteLpPositionMinter.totalSupply();
+
+    console.log(quoteLpPositionMinter.address);
+
+    expect(totalSupply).to.eq("12398426437");
+
+    const expectedAmountOut = await optionPerp.connect(user2).callStatic.withdraw(true, lpTokenAmount, 0);
+    expect(expectedAmountOut).to.eq("4999999999");
+
+    // We pay 10 USDC to bots
+    const priorityFees = "10000000";
+
+    // Create withdrawal request
+    await optionPerp.connect(user2).openWithdrawalRequest(
+      true, lpTokenAmount, expectedAmountOut.sub(priorityFees), priorityFees
+    );
+
+    // An external bot will try to trigger the withdraw asap
+    await b50.sendTransaction({
+      to: user3.address,
+      value: ethers.utils.parseEther("100.0")
+    });
+
+    await optionPerp.connect(user3).completeWithdrawalRequest(1);
+
+    const feesObtainedByBot = await usdc.balanceOf(user3.address);
+    expect(feesObtainedByBot).to.eq(priorityFees);
+
+    // 9990 as 10 is being paid to bot
+    const amountObtainedByUser = await usdc.balanceOf(user2.address);
+    expect(amountObtainedByUser).to.eq(9989999998);
   });
 });
