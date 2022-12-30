@@ -189,8 +189,8 @@ describe("Option Perp", function() {
   });
 
   it("should not be able to open a long position successfully if size is too big for LPs", async () => {
-    const initialBalance = (await usdc.balanceOf(user1.address));
-    expect(initialBalance).to.eq('100000000000');
+    const startBalance = (await usdc.balanceOf(user1.address));
+    expect(startBalance).to.eq('100000000000');
 
     await usdc.connect(user1).approve(optionPerp.address, "100000000000000000000");
 
@@ -201,8 +201,8 @@ describe("Option Perp", function() {
   });
 
   it("should open a long position successfully", async () => {
-    const initialBalance = (await usdc.balanceOf(user1.address));
-    expect(initialBalance).to.eq('100000000000');
+    const startBalance = (await usdc.balanceOf(user1.address));
+    expect(startBalance).to.eq('100000000000');
 
     await usdc.connect(user1).approve(optionPerp.address, "100000000000000000000");
 
@@ -212,7 +212,7 @@ describe("Option Perp", function() {
     const { size } = await optionPerp.perpPositions(0);
     expect(size).equal(toDecimals(1000, 8));
     expect(await usdc.balanceOf(user1.address)).equals(
-      initialBalance.sub(toDecimals(500, 6))
+      startBalance.sub(toDecimals(500, 6))
     );
 
     expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
@@ -238,10 +238,10 @@ describe("Option Perp", function() {
 
     await optionPerp.connect(user1).closePosition(0, 0);
 
-    const finalBalance = (await usdc.balanceOf(user1.address));
+    const endBalance = (await usdc.balanceOf(user1.address));
 
     // Initial balance was 100k
-    expect(finalBalance).to.eq('100489965510');
+    expect(endBalance).to.eq('100489965510');
 
     expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
       "10000000000" // TOTAL DEPOSITS DONT CHANGE
@@ -251,8 +251,8 @@ describe("Option Perp", function() {
   it("should open multiple position (short, long) successfully", async () => {
     await priceOracle.updateUnderlyingPrice("100000000000");
 
-    const initialBalance = (await usdc.balanceOf(user1.address));
-    expect(initialBalance).to.eq('100489965510');
+    const startBalance = (await usdc.balanceOf(user1.address));
+    expect(startBalance).to.eq('100489965510');
 
     console.log('Open long');
 
@@ -301,8 +301,8 @@ describe("Option Perp", function() {
   });
 
   it("add collateral to improve liquidation price", async () => {
-    const initialBalance = (await usdc.balanceOf(user1.address));
-    expect(initialBalance).to.eq('99079965510');
+    const startBalance = (await usdc.balanceOf(user1.address));
+    expect(startBalance).to.eq('99079965510');
 
     // Deposit $500 more
     await optionPerp.connect(user1).addCollateral(2, toDecimals(500, 6))
@@ -346,7 +346,7 @@ describe("Option Perp", function() {
     await optionPerp.connect(user1).reduceCollateral(3, toDecimals(200, 6));
 
     const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(3);
-    expect(shortLiquidationPrice).to.eq(176663533164); // Liquidation price decrases to $1766
+    expect(shortLiquidationPrice).to.eq(176663533164); // Liquidation price decreases to $1766
 
     let pnl = await optionPerp._getPositionPnl(3);
     expect(pnl).to.eq(12); // PnL does not change
@@ -372,8 +372,8 @@ describe("Option Perp", function() {
 
     await usdc.connect(bf5).transfer(user2.address, "10000000000");
 
-    const initialBalance = (await usdc.balanceOf(user2.address));
-    expect(initialBalance).to.eq('10000000000');
+    const startBalance = (await usdc.balanceOf(user2.address));
+    expect(startBalance).to.eq('10000000000');
 
     // Another user deposited 10k
 
@@ -401,13 +401,13 @@ describe("Option Perp", function() {
     // Test withdraw to see if we can get back our 10000 USDC burning 9219.37 LP tokens
     await optionPerp.connect(user2).withdraw(true, lpTokenAmount, 0);
 
-    const finalBalance = (await usdc.balanceOf(user2.address));
-    expect(finalBalance).to.eq('9999999999');
+    const endBalance = (await usdc.balanceOf(user2.address));
+    expect(endBalance).to.eq('9999999999');
   });
 
   it("another user should be able to deposit and request withdraw, a bot should be able to fullfill it", async () => {
-    const initialBalance = (await usdc.balanceOf(user2.address));
-    expect(initialBalance).to.eq('9999999999');
+    const startBalance = (await usdc.balanceOf(user2.address));
+    expect(startBalance).to.eq('9999999999');
 
     // Another user deposited 5k
 
@@ -450,5 +450,25 @@ describe("Option Perp", function() {
     // 9990 as 10 is being paid to bot
     const amountObtainedByUser = await usdc.balanceOf(user2.address);
     expect(amountObtainedByUser).to.eq(9989999998);
+  });
+
+  it("position can be liquidated", async () => {
+    const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(3);
+    expect(shortLiquidationPrice).to.eq(176679158245); // Liquidation price decreases to $1766
+    
+    await priceOracle.updateUnderlyingPrice("180000000000");
+
+    const startBalance = (await usdc.balanceOf(user3.address));
+    expect(startBalance).to.eq('10000000'); // 10 USDC
+
+    // User 3 calls liquidate() on User 1 short position
+
+    await optionPerp.connect(user3).liquidate(3);
+
+    const endBalance = (await usdc.balanceOf(user3.address));
+    expect(endBalance).to.eq('310000000'); // 300 USDC of liquidation fee
+    
+    const isPositionOpen = await optionPerp._isPositionOpen(3);
+    expect(isPositionOpen).to.eq(false);
   });
 });

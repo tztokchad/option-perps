@@ -228,6 +228,7 @@ contract OptionPerp is Ownable {
   event LiquidatePosition(
     uint indexed id,
     int margin,
+    int positions,
     int price,
     int liquidationFee,
     address indexed liquidator
@@ -758,6 +759,14 @@ contract OptionPerp is Ownable {
     );
   }
 
+  // Returns true if position is open
+  function _isPositionOpen(uint id)
+  public
+  view
+  returns (bool value) {
+    value = perpPositions[id].isOpen;
+  }
+
   // Get value of an open perp position (1e6)
   function _getPositionValue(uint id)
   public
@@ -909,6 +918,7 @@ contract OptionPerp is Ownable {
   ) external {
     // Check if position is not sufficiently collateralized
     require(!_isPositionCollateralized(id), "Position has enough collateral");
+    require(perpPositions[id].isOpen, "Position not open");
 
     bool isShort = perpPositions[id].isShort;
     int liquidationFee = perpPositions[id].margin * feeLiquidation / divisor;
@@ -919,9 +929,9 @@ contract OptionPerp is Ownable {
     epochLpData[isShort].oi -= perpPositions[id].size;
     epochLpData[isShort].positions -= perpPositions[id].positions;
 
-    epochLpData[isShort].averageOpenPrice  =
-      epochLpData[isShort].oi /
-      epochLpData[isShort].positions;
+    if (epochLpData[isShort].positions > 0)
+      epochLpData[isShort].averageOpenPrice = epochLpData[isShort].oi / epochLpData[isShort].positions;
+    else epochLpData[isShort].averageOpenPrice = 0;
 
     perpPositions[id].isOpen = false;
     perpPositions[id].pnl = -1 * perpPositions[id].margin;
@@ -933,10 +943,15 @@ contract OptionPerp is Ownable {
         _safeConvertToUint(liquidationFee)
       );
 
+    console.log('CALL OPM');
+
     // Mint option for liquidated user
     // PUT if isShort, CALL if not
-    id = optionPositionMinter.mint(optionPositionMinter.ownerOf(id));
-    optionPositions[id] = OptionPosition({
+    uint optionId = optionPositionMinter.mint(perpPositionMinter.ownerOf(id));
+
+    console.log('FINISH');
+
+    optionPositions[optionId] = OptionPosition({
       isOpen: true,
       isPut: isShort,
       amount: perpPositions[id].positions,
@@ -946,6 +961,7 @@ contract OptionPerp is Ownable {
     emit LiquidatePosition(
       id,
       perpPositions[id].margin,
+      perpPositions[id].positions,
       _getMarkPrice(),
       liquidationFee,
       msg.sender
