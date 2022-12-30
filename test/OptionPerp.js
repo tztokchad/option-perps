@@ -471,4 +471,12 @@ describe("Option Perp", function() {
     const isPositionOpen = await optionPerp._isPositionOpen(3);
     expect(isPositionOpen).to.eq(false);
   });
+
+  it("liquidated user can settle its option after epoch expires", async () => {
+    const optionPosition = await optionPerp.optionPositions(0);
+    expect(optionPosition['isOpen']).to.eq(true);
+    expect(optionPosition['isPut']).to.eq(true);
+    expect(optionPosition['amount']).to.eq("116822429");
+    expect(optionPosition['strike']).to.eq("128400000000");
+  });
 });
