@@ -473,10 +473,63 @@ describe("Option Perp", function() {
   });
 
   it("liquidated user can settle its option after epoch expires", async () => {
-    const optionPosition = await optionPerp.optionPositions(0);
-    expect(optionPosition['isOpen']).to.eq(true);
+    let optionPosition = await optionPerp.optionPositions(0);
+    expect(optionPosition['isSettled']).to.eq(false);
     expect(optionPosition['isPut']).to.eq(true);
     expect(optionPosition['amount']).to.eq("116822429");
     expect(optionPosition['strike']).to.eq("128400000000");
+
+    await expect(optionPerp.connect(user1).settle(0)).to.be.revertedWith("Too early");
+
+    await timeTravel(360000);
+
+    // before expiry but after liquidation price goes up and option token has positive pnl
+    await priceOracle.updateUnderlyingPrice("110000000000");
+
+    await optionPerp.updateEpoch(getTime() + oneWeek * 10);
+
+    const pnl = await optionPerp._getOptionPnl(0);
+    expect(pnl).to.eq(214953269);
+
+    const startBalance = (await usdc.balanceOf(user1.address));
+    expect(startBalance).to.eq("98526463819");
+
+    await optionPerp.connect(user1).settle(0);
+
+    const endBalance = (await usdc.balanceOf(user1.address));
+    expect(endBalance).to.eq("98741417088"); // 214.95 USDC of profit
+    // 1.16822429 tokens * (1284 strike - 1100 expiry)
+
+    optionPosition = await optionPerp.optionPositions(0);
+    expect(optionPosition['isSettled']).to.eq(true);
+  });
+
+  it("long position should remain open after epoch expiry", async () => {
+    await priceOracle.updateUnderlyingPrice("180000000000");
+
+    const isPositionOpen = await optionPerp._isPositionOpen(1);
+    let pnl = await optionPerp._getPositionPnl(1);
+
+    expect(isPositionOpen).to.eq(true);
+    expect(pnl).to.eq(800000000);
+  });
+
+  it("long position can be liquidated correctly too", async () => {
+    const liquidationPrice = await optionPerp._getPositionLiquidationPrice(1);
+    expect(liquidationPrice).to.eq("53311425300");
+
+    await priceOracle.updateUnderlyingPrice("53411423100");
+
+    await expect(optionPerp.connect(user3).liquidate(1)).to.be.revertedWith("Position has enough collateral");
+
+    await priceOracle.updateUnderlyingPrice("53011423099");
+
+    const startBalance = (await usdc.balanceOf(user3.address));
+    expect(startBalance).to.eq('310000000');
+
+    await optionPerp.connect(user3).liquidate(1);
+
+    const endBalance = (await usdc.balanceOf(user3.address));
+    expect(endBalance).to.eq('560000000'); // 250 USDC of liquidation fee
   });
 });
