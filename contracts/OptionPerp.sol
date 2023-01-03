@@ -84,8 +84,6 @@ contract OptionPerp is Ownable {
 
   uint public withdrawalRequestsCounter;
 
-  uint public withdrawalRequestsCounter;
-
   mapping (bool => EpochLPData) public epochLpData;
   mapping (uint => PerpPosition) public perpPositions;
   mapping (uint => OptionPosition) public optionPositions;
