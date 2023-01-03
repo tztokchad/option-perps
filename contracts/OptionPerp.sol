@@ -30,11 +30,6 @@ import "hardhat/console.sol";
 // - PNL and delta are retrieved by querying position NFTs for user and total position size + delta for LP
 // - Liquidation price is calculated by opening price - (margin / delta)
 
-// User tops up collateral:
-// - Collateral is added to open position
-// - NFT'd position is updated with added margin
-// - LPs record added margin
-
 // User closes position:
 // - Both long call and short put are closed
 // - PNL is settled on both ETH and USD LPs
@@ -49,18 +44,19 @@ import "hardhat/console.sol";
 
 // On expiry:
 // - LPs are auto-rolled over to next epoch
-// - Options are auto-settled vs LP
-// - LP Withdraws from previous epoch are now withdrawable
-// - Next epoch is now bootstrapped
+// - Positions remains open
+// - Options can be settled
 
 // Notes:
-// - 2 pools - eth / usdc  - single-sided liquidity. Lower liquidity side earns more fees. Incentivizes re-balancing to 50/50 target.
+// - 2 pools - eth / usdc  - single-sided liquidity
 // - Max leverage for opening long/short = mark price/((atm premium * 2) + fees + funding until expiry)
-//   Max leverage: 1000 / ((90 * 2) + (90 * 0.25 * 0.01) + (1000 * 0.03))
+// - Max leverage: 1000 / ((90 * 2) + (90 * 0.25 * 0.01) + (1000 * 0.03))
 // - Margin for opening long/short = (atm premium * max leverage / target leverage) + fees + funding until expiry
-// - On closing, If pnl is +ve, payoff is removed from eth LP if long, USD lp if short.
+// - On closing, If pnl is +ve, payoff is removed from eth LP if long, USD lp if short
 // - If pnl is -ve, OTM option is returned to pool + premium
 // - Liquidation price = opening price - (margin / delta)
+// - Deposits are always open
+// - Withdraws are always open (with a priority queue system)
 
 contract OptionPerp is Ownable {
 
@@ -92,12 +88,13 @@ contract OptionPerp is Ownable {
   // epoch => expiryPrice
   mapping (uint => int) public expiryPrices;
 
-  int public divisor                = 1e8;
+  int public constant divisor       = 1e8;
   int public minFundingRate         = 3650000000; // 36.5% annualized (0.1% a day)
   int public maxFundingRate         = 365000000000; // 365% annualized (1% a day)
   int public feeOpenPosition        = 5000000; // 0.05%
   int public feeClosePosition       = 5000000; // 0.05%
   int public feeLiquidation         = 50000000; // 0.5%
+  int public feePriorityWithheld    = 5000000000; // 50%
   int public liquidationThreshold   = 500000000; // 5%
 
   uint internal constant MAX_UINT = 2**256 - 1;
@@ -124,20 +121,8 @@ contract OptionPerp is Ownable {
     int openingFees;
     // Closing fees collected from positions
     int closingFees;
-    // Funding collected from positions
-    int funding;
     // Total open interest (in asset)
     int oi;
-    // // Total long delta
-    // int longDelta;
-    // // Total short delta
-    // int shortDelta;
-    // End of epoch PNL
-    int pnl;
-    // Queued withdrawals
-    int withdrawalQueue;
-    // Amount withdrawn
-    int withdrawn;
   }
 
   struct PerpPosition {
@@ -174,7 +159,7 @@ contract OptionPerp is Ownable {
     int minAmountOut;
     // is quote?
     bool isQuote;
-    // percentage of amountOut paid to bot which fullfil the request
+    // quantity of amount out used to incentivize a quick withdrawal
     int priorityFee;
     // user who withdraws
     address user;
@@ -248,18 +233,24 @@ contract OptionPerp is Ownable {
     int amountIn,
     int amountOut,
     bool isQuote,
-    int amountOutFees,
+    int amountOutFeesForBot,
+    int amountOutFeesWithheld,
     address resolver,
     address indexed user
   );
 
-   event RequestWithdraw(
+  event CreateWithdrawRequest(
     uint indexed id,
     int amountIn,
     bool isQuote,
     int minAmountOut,
     int priorityFee,
     address indexed user
+  );
+
+  event DeleteWithdrawRequest(
+    uint indexed id,
+    bool isFulfilled
   );
 
   constructor(
@@ -405,7 +396,7 @@ contract OptionPerp is Ownable {
       user: msg.sender
     });
 
-    emit RequestWithdraw(
+    emit CreateWithdrawRequest(
       withdrawalRequestsCounter,
       amountIn,
       isQuote,
@@ -425,7 +416,7 @@ contract OptionPerp is Ownable {
   // Fulfill withdrawal request
   function completeWithdrawalRequest(
     uint id
-  ) public returns (int amountOut, int amountOutFees)
+  ) public returns (int amountOut, int amountOutFeesForBot, int amountOutFeesWithheld)
   {
     PendingWithdrawal memory pendingWithdrawal = pendingWithdrawals[id];
 
@@ -453,7 +444,11 @@ contract OptionPerp is Ownable {
       require(amountOut <= available, "Insufficient liquidity");
 
       quote.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - pendingWithdrawal.priorityFee));
-      quote.transfer(msg.sender, _safeConvertToUint(pendingWithdrawal.priorityFee));
+
+      amountOutFeesWithheld = pendingWithdrawal.priorityFee * feePriorityWithheld / (divisor * 100);
+      amountOutFeesForBot = pendingWithdrawal.priorityFee - amountOutFeesWithheld;
+
+      quote.transfer(msg.sender, _safeConvertToUint(amountOutFeesForBot));
     } else {
       baseLpPositionMinter.burnFromOptionPerp(pendingWithdrawal.user, _safeConvertToUint(pendingWithdrawal.amountIn));
 
@@ -468,7 +463,11 @@ contract OptionPerp is Ownable {
       require(amountOut <= available, "Insufficient liquidity");
 
       base.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - pendingWithdrawal.priorityFee));
-      base.transfer(msg.sender, _safeConvertToUint(pendingWithdrawal.priorityFee));
+
+      amountOutFeesWithheld = pendingWithdrawal.priorityFee * feePriorityWithheld / (divisor * 100);
+      amountOutFeesForBot = pendingWithdrawal.priorityFee - amountOutFeesWithheld;
+
+      base.transfer(msg.sender, _safeConvertToUint(amountOutFeesForBot));
     }
 
     require(amountOut - pendingWithdrawal.priorityFee >= pendingWithdrawal.minAmountOut, "Insufficient amount out");
@@ -476,17 +475,38 @@ contract OptionPerp is Ownable {
     console.log('AMOUNT OUT');
     console.logInt(amountOut);
 
-    amountOutFees = pendingWithdrawal.priorityFee;
-
     delete pendingWithdrawals[id];
+
+    emit DeleteWithdrawRequest(
+      id,
+      true
+    );
 
     emit Withdraw(
       pendingWithdrawal.amountIn,
       amountOut - pendingWithdrawal.priorityFee,
       pendingWithdrawal.isQuote,
-      pendingWithdrawal.priorityFee,
+      amountOutFeesForBot,
+      amountOutFeesWithheld,
       msg.sender,
       pendingWithdrawal.user
+    );
+  }
+
+  // Cancel withdrawal request
+  function cancelWithdrawalRequest(
+    uint id
+  ) public
+  {
+    PendingWithdrawal memory pendingWithdrawal = pendingWithdrawals[id];
+
+    require(pendingWithdrawal.user == msg.sender, "Invalid sender");
+
+    delete pendingWithdrawals[id];
+
+    emit DeleteWithdrawRequest(
+      id,
+      false
     );
   }
 
@@ -498,7 +518,7 @@ contract OptionPerp is Ownable {
   ) external returns (int amountOut)
   {
     uint id = openWithdrawalRequest(isQuote, amountIn, minAmountOut, 0);
-    (amountOut, ) = completeWithdrawalRequest(id);
+    (amountOut,,) = completeWithdrawalRequest(id);
   }
 
   // Safe convert to uint without overflow
@@ -561,6 +581,25 @@ contract OptionPerp is Ownable {
     epoch += 1;
   }
 
+  function updateParameters(
+    int _minFundingRate,
+    int _maxFundingRate,
+    int _feeOpenPosition,
+    int _feeClosePosition,
+    int _feeLiquidation,
+    int _feePriorityWithheld,
+    int _liquidationThreshold)
+  external
+  onlyOwner {
+    minFundingRate = _minFundingRate;
+    maxFundingRate = _maxFundingRate;
+    feeOpenPosition = _feeOpenPosition;
+    feeClosePosition = _feeClosePosition;
+    feeLiquidation = _feeLiquidation;
+    feePriorityWithheld = _feePriorityWithheld;
+    liquidationThreshold = _liquidationThreshold;
+  }
+
   // Open a new position
   // Long  - long call, short put.
   // Short - long put, short call.
@@ -615,9 +654,6 @@ contract OptionPerp is Ownable {
     epochLpData[_isShort].openingFees       += openingFees;
     epochLpData[_isShort].activeDeposits    += _size / 10 ** 2;
     epochLpData[_isShort].positions         += positions;
-
-    // epochLpData[_isShort].longDelta   += (int)(size);
-    // epochLpData[!_isShort].shortDelta += (int)(size);
 
     if (epochLpData[_isShort].averageOpenPrice == 0)
       epochLpData[_isShort].averageOpenPrice  = _getMarkPrice();
@@ -950,6 +986,8 @@ contract OptionPerp is Ownable {
       epochLpData[isShort].positions;
 
     epochLpData[isShort].positions -= perpPositions[id].positions;
+
+    epochLpData[isShort].closingFees += closingFees;
 
     perpPositions[id].isOpen = false;
     perpPositions[id].pnl = pnl;
