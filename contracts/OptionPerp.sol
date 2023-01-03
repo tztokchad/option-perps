@@ -80,7 +80,9 @@ contract OptionPerp is Ownable {
   IUniswapV3Router public uniV3Router;
   
   int public expiry;
-  int public epoch;
+  uint public epoch;
+
+  uint public withdrawalRequestsCounter;
 
   uint public withdrawalRequestsCounter;
 
@@ -90,7 +92,7 @@ contract OptionPerp is Ownable {
   mapping (uint => PendingWithdrawal) public pendingWithdrawals;
 
   // epoch => expiryPrice
-  mapping (int => int) public expiryPrices;
+  mapping (uint => int) public expiryPrices;
 
   int public divisor                = 1e8;
   int public minFundingRate         = 3650000000; // 36.5% annualized (0.1% a day)
@@ -181,15 +183,25 @@ contract OptionPerp is Ownable {
   }
 
   struct OptionPosition {
-    // Is position open
-    bool isOpen;
+    // Is option settled
+    bool isSettled;
     // Is put
     bool isPut;
     // Total amount
     int amount;
     // Strike price
     int strike;
+    // Epoch
+    uint epoch;
   }
+
+  event Settle(
+      uint epoch,
+      int strike,
+      int amount,
+      int pnl,
+      address indexed to
+  );
 
   event Deposit(
     bool isQuote,
@@ -228,6 +240,7 @@ contract OptionPerp is Ownable {
   event LiquidatePosition(
     uint indexed id,
     int margin,
+    int positions,
     int price,
     int liquidationFee,
     address indexed liquidator
@@ -758,6 +771,14 @@ contract OptionPerp is Ownable {
     );
   }
 
+  // Returns true if position is open
+  function _isPositionOpen(uint id)
+  public
+  view
+  returns (bool value) {
+    value = perpPositions[id].isOpen;
+  }
+
   // Get value of an open perp position (1e6)
   function _getPositionValue(uint id)
   public
@@ -792,6 +813,34 @@ contract OptionPerp is Ownable {
     // _borrowed is ie6
     int _borrowed = perpPositions[id].size / 10 ** 2 - perpPositions[id].margin;
     funding = ((_borrowed * fundingRate / (divisor * 100)) * int(block.timestamp - perpPositions[id].openedAt)) / 365 days;
+  }
+
+  // Get Pnl of an option position (1e6)
+  function _getOptionPnl(uint id)
+  public
+  view
+  returns (int value) {
+    int expiryPrice = expiryPrices[optionPositions[id].epoch];
+
+    require(expiryPrice > 0, "Too early");
+
+    console.log('STRIKE');
+    console.logInt(optionPositions[id].strike);
+
+    console.log('EXPIRY PRICE');
+    console.logInt(expiryPrice);
+
+    console.log('AMOUNT');
+    console.logInt(optionPositions[id].amount);
+
+    // all terms are ie8
+    // after we multiply we have an ie16 term so we remove 8 and another 2 to make it ie6
+
+    if (optionPositions[id].isPut) {
+      value = ((optionPositions[id].strike - expiryPrice) * optionPositions[id].amount) / 10 ** (8 + 2);
+    } else {
+      value = ((expiryPrice - optionPositions[id].strike) * optionPositions[id].amount) / 10 ** (8 + 2);
+    }
   }
 
   // Get Pnl of an open perp position (1e6)
@@ -839,6 +888,34 @@ contract OptionPerp is Ownable {
     int netMargin = _getPositionNetMargin(id);
     netMargin -= netMargin * liquidationThreshold / (divisor * 100);
     isCollateralized = netMargin + pnl >= 0;
+  }
+
+  // Settle an option token
+  function settle(
+    uint id
+  ) public {
+    address owner = optionPositionMinter.ownerOf(id);
+
+    require(!optionPositions[id].isSettled, "Already settled");
+    require(optionPositions[id].epoch < epoch, "Too early");
+    require(msg.sender == owner, "Invalid sender");
+
+    optionPositions[id].isSettled = true;
+
+    int pnl = _getOptionPnl(id);
+
+    require(pnl > 0, "Negative pnl");
+
+    if (optionPositions[id].isPut) quote.transfer(owner, _safeConvertToUint(pnl));
+    else base.transfer(owner, _safeConvertToUint(pnl));
+
+    emit Settle(
+        optionPositions[id].epoch,
+        optionPositions[id].strike,
+        optionPositions[id].amount,
+        pnl,
+        owner
+    );
   }
 
   // Close an existing position
@@ -909,6 +986,7 @@ contract OptionPerp is Ownable {
   ) external {
     // Check if position is not sufficiently collateralized
     require(!_isPositionCollateralized(id), "Position has enough collateral");
+    require(perpPositions[id].isOpen, "Position not open");
 
     bool isShort = perpPositions[id].isShort;
     int liquidationFee = perpPositions[id].margin * feeLiquidation / divisor;
@@ -919,33 +997,43 @@ contract OptionPerp is Ownable {
     epochLpData[isShort].oi -= perpPositions[id].size;
     epochLpData[isShort].positions -= perpPositions[id].positions;
 
-    epochLpData[isShort].averageOpenPrice  =
-      epochLpData[isShort].oi /
-      epochLpData[isShort].positions;
+    if (epochLpData[isShort].positions > 0)
+      epochLpData[isShort].averageOpenPrice = epochLpData[isShort].oi / epochLpData[isShort].positions;
+    else epochLpData[isShort].averageOpenPrice = 0;
 
     perpPositions[id].isOpen = false;
     perpPositions[id].pnl = -1 * perpPositions[id].margin;
 
+    uint amountOut = _safeConvertToUint(liquidationFee);
+
+    if (!perpPositions[id].isShort) {
+      // swap base for enough quote to pay liquidationFee
+      _swapUsingUniV3ExactOut(address(base), address(quote), amountOut, MAX_UINT, 500);
+    }
+
     // Transfer liquidation fee to sender
-    IERC20(perpPositions[id].isShort ? quote : base).
+    IERC20(quote).
       transfer(
         msg.sender,
-        _safeConvertToUint(liquidationFee)
+        amountOut
       );
 
     // Mint option for liquidated user
     // PUT if isShort, CALL if not
-    id = optionPositionMinter.mint(optionPositionMinter.ownerOf(id));
-    optionPositions[id] = OptionPosition({
-      isOpen: true,
+    uint optionId = optionPositionMinter.mint(perpPositionMinter.ownerOf(id));
+
+    optionPositions[optionId] = OptionPosition({
+      isSettled: false,
       isPut: isShort,
       amount: perpPositions[id].positions,
-      strike: perpPositions[id].averageOpenPrice
+      strike: perpPositions[id].averageOpenPrice,
+      epoch: epoch
     });
 
     emit LiquidatePosition(
       id,
       perpPositions[id].margin,
+      perpPositions[id].positions,
       _getMarkPrice(),
       liquidationFee,
       msg.sender

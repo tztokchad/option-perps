@@ -36,8 +36,11 @@ contract OptionPositionMinter is
       msg.sender == optionPerpContract,
       "Only option perp contract can mint an option perp position token"
     );
+
     tokenId = _tokenIdCounter.current();
+
     _tokenIdCounter.increment();
+
     _safeMint(to, tokenId);
     return tokenId;
   }
