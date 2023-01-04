@@ -14,7 +14,7 @@ import {IOptionPricing} from "./interface/IOptionPricing.sol";
 import {IVolatilityOracle} from "./interface/IVolatilityOracle.sol";
 import {IPriceOracle} from "./interface/IPriceOracle.sol";
 import {IGmxRouter} from "./interface/IGmxRouter.sol";
-import {IUniswapV3Router} from "./interface/IUniswapV3Router.sol";
+import {IGmxHelper} from "./interface/IGmxHelper.sol";
 
 import "hardhat/console.sol";
 
@@ -73,7 +73,7 @@ contract OptionPerp is Ownable {
   OptionPositionMinter public optionPositionMinter;
 
   IGmxRouter public gmxRouter;
-  IUniswapV3Router public uniV3Router;
+  IGmxHelper public gmxHelper;
   
   int public expiry;
   uint public epoch;
@@ -260,7 +260,7 @@ contract OptionPerp is Ownable {
     address _volatilityOracle,
     address _priceOracle,
     address _gmxRouter,
-    address _uniV3Router,
+    address _gmxHelper,
     address _quoteLpPositionMinter,
     address _baseLpPositionMinter,
     int _expiry
@@ -275,7 +275,7 @@ contract OptionPerp is Ownable {
     optionPricing = IOptionPricing(_optionPricing);
     volatilityOracle = IVolatilityOracle(_volatilityOracle);
     priceOracle = IPriceOracle(_priceOracle);
-    uniV3Router = IUniswapV3Router(_uniV3Router);
+    gmxHelper = IGmxHelper(_gmxHelper);
     gmxRouter = IGmxRouter(_gmxRouter);
     expiry = _expiry;
 
@@ -285,51 +285,27 @@ contract OptionPerp is Ownable {
     optionPositionMinter = new OptionPositionMinter();
 
     base.approve(_gmxRouter, MAX_UINT);
-    base.approve(_uniV3Router, MAX_UINT);
   }
 
-  function _swapUsingUniV3ExactIn(
+  function _swapUsingGmxExactOut(
         address from,
         address to,
-        uint256 amountIn,
-        uint256 minAmountOut,
+        uint256 targetAmountOut,
         uint24 fees
-    ) internal returns (uint256 amountOut) {
-      IUniswapV3Router.ExactInputSingleParams
-          memory swapParams = IUniswapV3Router.ExactInputSingleParams(
-              from,
-              to,
-              fees,
-              address(this),
-              block.timestamp,
-              amountIn,
-              minAmountOut,
-              0
-          );
+    ) internal returns (uint exactAmountOut) {
+      address[] memory path;
 
-      amountOut = uniV3Router.exactInputSingle(swapParams);
-  }
+      path = new address[](2);
+      path[0] = address(from);
+      path[1] = address(to);
 
-  function _swapUsingUniV3ExactOut(
-        address from,
-        address to,
-        uint256 amountOut,
-        uint256 maxAmountIn,
-        uint24 fees
-    ) internal returns (uint256 amountIn) {
-      IUniswapV3Router.ExactOutputSingleParams
-          memory swapParams = IUniswapV3Router.ExactOutputSingleParams(
-              from,
-              to,
-              fees,
-              address(this),
-              block.timestamp,
-              amountOut,
-              maxAmountIn,
-              0
-          );
+      uint balance = IERC20(to).balanceOf(address(this));
 
-      amountIn = uniV3Router.exactOutputSingle(swapParams);
+      uint amountIn = gmxHelper.getAmountIn(targetAmountOut, 0, to, from);
+
+      gmxRouter.swap(path, amountIn, 0, address(this));
+
+      exactAmountOut = IERC20(to).balanceOf(address(this)) - balance;
   }
 
   function _getTotalSupply(bool isQuote) internal view returns (int totalSupply) {
@@ -1002,7 +978,7 @@ contract OptionPerp is Ownable {
 
       if (!perpPositions[id].isShort) {
         // Convert collateral + PNL to quote and send to user
-        _swapUsingUniV3ExactOut(address(base), address(quote), amountOut, MAX_UINT, 500);
+        amountOut = _swapUsingGmxExactOut(address(base), address(quote), amountOut, 500);
       }
 
       quote.transfer(perpPositionMinter.ownerOf(id), amountOut);
@@ -1044,7 +1020,7 @@ contract OptionPerp is Ownable {
 
     if (!perpPositions[id].isShort) {
       // swap base for enough quote to pay liquidationFee
-      _swapUsingUniV3ExactOut(address(base), address(quote), amountOut, MAX_UINT, 500);
+      amountOut = _swapUsingGmxExactOut(address(base), address(quote), amountOut, 500);
     }
 
     // Transfer liquidation fee to sender

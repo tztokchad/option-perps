@@ -92,7 +92,7 @@ describe("Option Perp", function() {
       volatilityOracle.address,
       priceOracle.address,
       "0xaBBc5F99639c9B6bCb58544ddf04EFA6802F4064", // GMX
-      "0xE592427A0AEce92De3Edee1F18E0157C05861564", // UNI V3
+      "0xa028B56261Bb1A692C06D993c383c872B51AfB33", // GMX HELPER
       quoteLpPositionMinter.address,
       baseLpPositionMinter.address,
       getTime() + oneWeek
@@ -227,21 +227,21 @@ describe("Option Perp", function() {
     expect(estimatedPnl).to.eq('500000000');
 
     let amountOutAfterClosing = await optionPerp.connect(user1).callStatic.closePosition(0, 0);
-    expect(amountOutAfterClosing).to.eq('993749995');
+    expect(amountOutAfterClosing).to.eq('993748245');
 
     await network.provider.send("evm_setNextBlockTimestamp", [1671240414]);
     await network.provider.send("evm_mine");
 
     // After hours we pay more funding
     amountOutAfterClosing = await optionPerp.connect(user1).callStatic.closePosition(0, 0);
-    expect(amountOutAfterClosing).to.gte('989965504');
+    expect(amountOutAfterClosing).to.gte('989963711');
 
     await optionPerp.connect(user1).closePosition(0, 0);
 
     const endBalance = (await usdc.balanceOf(user1.address));
 
     // Initial balance was 100k
-    expect(endBalance).to.eq('100489965510');
+    expect(endBalance).to.eq('100489963711');
 
     expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
       "10000000000" // TOTAL DEPOSITS DONT CHANGE
@@ -252,7 +252,7 @@ describe("Option Perp", function() {
     await priceOracle.updateUnderlyingPrice("100000000000");
 
     const startBalance = (await usdc.balanceOf(user1.address));
-    expect(startBalance).to.eq('100489965510');
+    expect(startBalance).to.eq('100489963711');
 
     console.log('Open long');
 
@@ -294,7 +294,7 @@ describe("Option Perp", function() {
     expect(shortPnl).to.eq(-852000000); // -$852
 
     const obtainedClosingLong = await optionPerp.connect(user1).callStatic.closePosition(1, 0);
-    expect(obtainedClosingLong).to.eq(775948660); // $775
+    expect(obtainedClosingLong).to.eq(775947240); // $775
 
     const obtainedClosingShort = await optionPerp.connect(user1).callStatic.closePosition(2, 0); // $1 from liquidationPrice
     expect(obtainedClosingShort).to.eq(48406244); // $48
@@ -302,13 +302,13 @@ describe("Option Perp", function() {
 
   it("add collateral to improve liquidation price", async () => {
     const startBalance = (await usdc.balanceOf(user1.address));
-    expect(startBalance).to.eq('99079965510');
+    expect(startBalance).to.eq('99079963711');
 
     // Deposit $500 more
     await optionPerp.connect(user1).addCollateral(2, toDecimals(500, 6))
 
     const balance = (await usdc.balanceOf(user1.address));
-    expect(balance).to.eq('98579965510');
+    expect(balance).to.eq('98579963711');
 
     // Liquidation price for our short goes from $1285 to $1442
     const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(2);
@@ -492,12 +492,12 @@ describe("Option Perp", function() {
     expect(pnl).to.eq(214953269);
 
     const startBalance = (await usdc.balanceOf(user1.address));
-    expect(startBalance).to.eq("98526463819");
+    expect(startBalance).to.eq("98526462020");
 
     await optionPerp.connect(user1).settle(0);
 
     const endBalance = (await usdc.balanceOf(user1.address));
-    expect(endBalance).to.eq("98741417088"); // 214.95 USDC of profit
+    expect(endBalance).to.eq("98741415289"); // 214.95 USDC of profit
     // 1.16822429 tokens * (1284 strike - 1100 expiry)
 
     optionPosition = await optionPerp.optionPositions(0);
@@ -530,7 +530,7 @@ describe("Option Perp", function() {
     await optionPerp.connect(user3).liquidate(1);
 
     const endBalance = (await usdc.balanceOf(user3.address));
-    expect(endBalance).to.eq('555000000'); // 250 USDC of liquidation fee
+    expect(endBalance).to.eq('554999640'); // 250 USDC of liquidation fee
   });
 
   it("another user should be able to deposit and request withdraw, a bot should be able to fullfill it", async () => {
@@ -571,7 +571,7 @@ describe("Option Perp", function() {
     });
 
     const user3Balance = await usdc.balanceOf(user3.address);
-    expect(user3Balance).to.eq("555000000");
+    expect(user3Balance).to.eq("554999640");
 
     await optionPerp.connect(user3).completeWithdrawalRequest(2);
 
