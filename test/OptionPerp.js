@@ -445,7 +445,7 @@ describe("Option Perp", function() {
     await optionPerp.connect(user3).completeWithdrawalRequest(1);
 
     const feesObtainedByBot = await usdc.balanceOf(user3.address);
-    expect(feesObtainedByBot).to.eq(priorityFees);
+    expect(feesObtainedByBot).to.eq("5000000"); // half of fees are withheld by LPs
 
     // 9990 as 10 is being paid to bot
     const amountObtainedByUser = await usdc.balanceOf(user2.address);
@@ -459,14 +459,14 @@ describe("Option Perp", function() {
     await priceOracle.updateUnderlyingPrice("180000000000");
 
     const startBalance = (await usdc.balanceOf(user3.address));
-    expect(startBalance).to.eq('10000000'); // 10 USDC
+    expect(startBalance).to.eq('5000000'); // 5 USDC
 
     // User 3 calls liquidate() on User 1 short position
 
     await optionPerp.connect(user3).liquidate(3);
 
     const endBalance = (await usdc.balanceOf(user3.address));
-    expect(endBalance).to.eq('310000000'); // 300 USDC of liquidation fee
+    expect(endBalance).to.eq('305000000'); // 300 USDC of liquidation fee
     
     const isPositionOpen = await optionPerp._isPositionOpen(3);
     expect(isPositionOpen).to.eq(false);
@@ -525,17 +525,17 @@ describe("Option Perp", function() {
     await priceOracle.updateUnderlyingPrice("53011423099");
 
     const startBalance = (await usdc.balanceOf(user3.address));
-    expect(startBalance).to.eq('310000000');
+    expect(startBalance).to.eq('305000000');
 
     await optionPerp.connect(user3).liquidate(1);
 
     const endBalance = (await usdc.balanceOf(user3.address));
-    expect(endBalance).to.eq('560000000'); // 250 USDC of liquidation fee
+    expect(endBalance).to.eq('555000000'); // 250 USDC of liquidation fee
   });
 
   it("another user should be able to deposit and request withdraw, a bot should be able to fullfill it", async () => {
     const initialBalance = (await usdc.balanceOf(user2.address));
-    expect(initialBalance).to.eq('9999999999');
+    expect(initialBalance).to.eq('9989999998');
 
     // Another user deposited 5k
 
@@ -545,16 +545,16 @@ describe("Option Perp", function() {
 
     const lpTokenAmount = await quoteLpPositionMinter.balanceOf(user2.address);
 
-    expect(lpTokenAmount.toString()).equals("2398426437");
+    expect(lpTokenAmount.toString()).equals("283853823");
 
     const totalSupply = await quoteLpPositionMinter.totalSupply();
 
     console.log(quoteLpPositionMinter.address);
 
-    expect(totalSupply).to.eq("12398426437");
+    expect(totalSupply).to.eq("10283853823");
 
     const expectedAmountOut = await optionPerp.connect(user2).callStatic.withdraw(true, lpTokenAmount, 0);
-    expect(expectedAmountOut).to.eq("4999999999");
+    expect(expectedAmountOut).to.eq("4999999984");
 
     // We pay 10 USDC to bots
     const priorityFees = "10000000";
@@ -570,13 +570,15 @@ describe("Option Perp", function() {
       value: ethers.utils.parseEther("100.0")
     });
 
-    await optionPerp.connect(user3).completeWithdrawalRequest(1);
+    const user3Balance = await usdc.balanceOf(user3.address);
+    expect(user3Balance).to.eq("555000000");
 
-    const feesObtainedByBot = await usdc.balanceOf(user3.address);
-    expect(feesObtainedByBot).to.eq(priorityFees);
+    await optionPerp.connect(user3).completeWithdrawalRequest(2);
 
-    // 9990 as 10 is being paid to bot
+    const feesObtainedByBot = (await usdc.balanceOf(user3.address)).sub(user3Balance);
+    expect(feesObtainedByBot).to.eq("5000000");
+
     const amountObtainedByUser = await usdc.balanceOf(user2.address);
-    expect(amountObtainedByUser).to.eq(9989999998);
+    expect(amountObtainedByUser).to.eq("9979999982");
   });
 });
