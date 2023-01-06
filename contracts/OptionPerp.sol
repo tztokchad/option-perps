@@ -10,6 +10,8 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {PerpPositionMinter} from "./positions/PerpPositionMinter.sol";
 import {OptionPositionMinter} from "./positions/OptionPositionMinter.sol";
 
+import {Pausable} from "./helpers/Pausable.sol";
+
 import {IOptionPricing} from "./interface/IOptionPricing.sol";
 import {IVolatilityOracle} from "./interface/IVolatilityOracle.sol";
 import {IPriceOracle} from "./interface/IPriceOracle.sol";
@@ -58,7 +60,7 @@ import "hardhat/console.sol";
 // - Deposits are always open
 // - Withdraws are always open (with a priority queue system)
 
-contract OptionPerp is Ownable {
+contract OptionPerp is Ownable, Pausable {
 
   IERC20 public base;
   IERC20 public quote;
@@ -253,6 +255,8 @@ contract OptionPerp is Ownable {
     bool isFulfilled
   );
 
+  event EmergencyWithdraw(address sender);
+
   constructor(
     address _base,
     address _quote,
@@ -316,6 +320,8 @@ contract OptionPerp is Ownable {
     bool isQuote,
     uint amountIn
   ) external {
+    _whenNotPaused();
+
     uint amountOut = _safeConvertToUint(_calcLpAmount(isQuote, int(amountIn)));
     epochLpData[isQuote].totalDeposits += int(amountIn);
 
@@ -349,6 +355,8 @@ contract OptionPerp is Ownable {
     int priorityFee
   ) public returns (uint id)
   {
+    _whenNotPaused();
+
     uint lpAmount;
 
     if (isQuote) {
@@ -394,6 +402,8 @@ contract OptionPerp is Ownable {
     uint id
   ) public returns (int amountOut, int amountOutFeesForBot, int amountOutFeesWithheld)
   {
+    _whenNotPaused();
+
     PendingWithdrawal memory pendingWithdrawal = pendingWithdrawals[id];
 
     require(pendingWithdrawal.user != address(0), "Invalid id");
@@ -474,6 +484,8 @@ contract OptionPerp is Ownable {
     uint id
   ) public
   {
+    _whenNotPaused();
+
     PendingWithdrawal memory pendingWithdrawal = pendingWithdrawals[id];
 
     require(pendingWithdrawal.user == msg.sender, "Invalid sender");
@@ -544,38 +556,6 @@ contract OptionPerp is Ownable {
     console.logInt(amountOut);
   }
 
-  // Update expiry and epoch
-  function updateEpoch(
-    int nextExpiryTimestamp
-  )
-  external
-  onlyOwner {
-    require(int(block.timestamp) <= expiry, "Too soon");
-
-    expiry = nextExpiryTimestamp;
-    expiryPrices[epoch] = _getMarkPrice();
-    epoch += 1;
-  }
-
-  function updateParameters(
-    int _minFundingRate,
-    int _maxFundingRate,
-    int _feeOpenPosition,
-    int _feeClosePosition,
-    int _feeLiquidation,
-    int _feePriorityWithheld,
-    int _liquidationThreshold)
-  external
-  onlyOwner {
-    minFundingRate = _minFundingRate;
-    maxFundingRate = _maxFundingRate;
-    feeOpenPosition = _feeOpenPosition;
-    feeClosePosition = _feeClosePosition;
-    feeLiquidation = _feeLiquidation;
-    feePriorityWithheld = _feePriorityWithheld;
-    liquidationThreshold = _liquidationThreshold;
-  }
-
   // Open a new position
   // Long  - long call, short put.
   // Short - long put, short call.
@@ -584,6 +564,8 @@ contract OptionPerp is Ownable {
     int _size, // in USD (1e8)
     int _collateralAmount // in USD (1e6) collateral used to cover premium + funding + fees and write option
   ) public returns (uint id) {
+    _whenNotPaused();
+
     int _sizeInBase = _size * int(10 ** base.decimals()) / _getMarkPrice();
     // Check if enough liquidity is available to open position
     require(
@@ -679,6 +661,8 @@ contract OptionPerp is Ownable {
     int _collateralAmount, // in USD (1e6) collateral used to cover premium + funding + fees and write option
     uint _minAmountOut // to avoid frontrunning
   ) external returns (uint amountOut) {
+    _whenNotPaused();
+
     bool isShort = perpPositions[id].isShort;
     int originalSize = perpPositions[id].size;
     amountOut = closePosition(id, _minAmountOut);
@@ -739,6 +723,8 @@ contract OptionPerp is Ownable {
     uint id,
     int collateralAmount
   ) external {
+    _whenNotPaused();
+
     // Check if position is open
     require(perpPositions[id].isOpen, "Position not open");
     epochLpData[perpPositions[id].isShort].margin += collateralAmount;
@@ -761,6 +747,8 @@ contract OptionPerp is Ownable {
     uint id,
     int collateralAmount
   ) external {
+    _whenNotPaused();
+
     // Check if position is open
     require(perpPositions[id].isOpen, "Position not open");
     epochLpData[perpPositions[id].isShort].margin -= collateralAmount;
@@ -904,6 +892,8 @@ contract OptionPerp is Ownable {
   function settle(
     uint id
   ) public {
+    _whenNotPaused();
+
     address owner = optionPositionMinter.ownerOf(id);
 
     require(!optionPositions[id].isSettled, "Already settled");
@@ -933,6 +923,8 @@ contract OptionPerp is Ownable {
     uint id,
     uint minAmountOut
   ) public returns (uint amountOut) {
+    _whenNotPaused();
+
     // Check if position is open
     require(perpPositions[id].isOpen, "Position not open");
     // Sender must be owner of position
@@ -996,6 +988,8 @@ contract OptionPerp is Ownable {
   function liquidate(
     uint id
   ) external {
+    _whenNotPaused();
+
     // Check if position is not sufficiently collateralized
     require(!_isPositionCollateralized(id), "Position has enough collateral");
     require(perpPositions[id].isOpen, "Position not open");
@@ -1050,5 +1044,75 @@ contract OptionPerp is Ownable {
       liquidationFee,
       msg.sender
     );
+  }
+
+  // Update expiry and epoch
+  function updateEpoch(
+    int nextExpiryTimestamp
+  )
+  external
+  onlyOwner {
+    _whenNotPaused();
+    require(int(block.timestamp) <= expiry, "Too soon");
+
+    expiry = nextExpiryTimestamp;
+    expiryPrices[epoch] = _getMarkPrice();
+    epoch += 1;
+  }
+
+  function updateParameters(
+    int _minFundingRate,
+    int _maxFundingRate,
+    int _feeOpenPosition,
+    int _feeClosePosition,
+    int _feeLiquidation,
+    int _feePriorityWithheld,
+    int _liquidationThreshold)
+  external
+  onlyOwner {
+    minFundingRate = _minFundingRate;
+    maxFundingRate = _maxFundingRate;
+    feeOpenPosition = _feeOpenPosition;
+    feeClosePosition = _feeClosePosition;
+    feeLiquidation = _feeLiquidation;
+    feePriorityWithheld = _feePriorityWithheld;
+    liquidationThreshold = _liquidationThreshold;
+  }
+
+  /// @notice Transfers all funds to msg.sender
+  /// @dev Can only be called by the owner
+  /// @param tokens The list of erc20 tokens to withdraw
+  /// @param transferNative Whether should transfer the native currency
+  function emergencyWithdraw(address[] calldata tokens, bool transferNative)
+      external
+      onlyOwner
+  {
+      _whenPaused();
+      if (transferNative) payable(msg.sender).transfer(address(this).balance);
+
+      IERC20 token;
+
+      for (uint256 i; i < tokens.length; ) {
+          token = IERC20(tokens[i]);
+          token.transfer(msg.sender, token.balanceOf(address(this)));
+
+          unchecked {
+              ++i;
+          }
+      }
+
+      emit EmergencyWithdraw(msg.sender);
+  }
+
+  /// @notice Pauses the vault for emergency cases
+  /// @dev Can only be called by the owner
+  function pause() external onlyOwner {
+      _pause();
+  }
+
+  /// @notice Unpauses the vault
+  /// @dev Can only be called by the owner
+  function unpause() external onlyOwner {
+      _unpause();
   }
 }
