@@ -415,6 +415,15 @@ contract OptionPerp is Ownable, Pausable {
     console.log("AMOUNT TO BURN");
     console.logInt(pendingWithdrawal.amountIn);
 
+    int currentPrice = _getMarkPrice();
+
+    // unrealizedPnl is ie6
+    // we use !isQuote to get PnL of traders
+    int unrealizedPnl = (pendingWithdrawal.isQuote ? (currentPrice - epochLpData[!pendingWithdrawal.isQuote].averageOpenPrice) : (epochLpData[!pendingWithdrawal.isQuote].averageOpenPrice - currentPrice)) * (epochLpData[!pendingWithdrawal.isQuote].positions / 10 ** 2) / divisor;
+
+    // totalDeposits is ie6 for isQuote, ie18 for isBase
+    int deposits = epochLpData[pendingWithdrawal.isQuote].totalDeposits - (pendingWithdrawal.isQuote ? unrealizedPnl : ((unrealizedPnl * 10 ** 2) * 10 ** 18) / currentPrice);
+
     if (pendingWithdrawal.isQuote) {
       quoteLpPositionMinter.burnFromOptionPerp(pendingWithdrawal.user, _safeConvertToUint(pendingWithdrawal.amountIn));
 
@@ -426,7 +435,7 @@ contract OptionPerp is Ownable, Pausable {
       console.log('TOTAL SUPPLY');
       console.logInt(_getTotalSupply(pendingWithdrawal.isQuote));
 
-      amountOut = (pendingWithdrawal.amountIn * epochLpData[pendingWithdrawal.isQuote].totalDeposits) / totalSupply;
+      amountOut = (pendingWithdrawal.amountIn * deposits) / totalSupply;
       require(amountOut <= available, "Insufficient liquidity");
 
       quote.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - pendingWithdrawal.priorityFee));
@@ -445,7 +454,7 @@ contract OptionPerp is Ownable, Pausable {
       console.log('TOTAL SUPPLY');
       console.logInt(_getTotalSupply(pendingWithdrawal.isQuote));
 
-      amountOut = (pendingWithdrawal.amountIn * epochLpData[pendingWithdrawal.isQuote].totalDeposits) / totalSupply;
+      amountOut = (pendingWithdrawal.amountIn * deposits) / totalSupply;
       require(amountOut <= available, "Insufficient liquidity");
 
       base.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - pendingWithdrawal.priorityFee));
@@ -529,10 +538,17 @@ contract OptionPerp is Ownable, Pausable {
     int currentPrice = _getMarkPrice();
 
     // unrealizedPnl is ie6
-    int unrealizedPnl = ((currentPrice - epochLpData[isQuote].averageOpenPrice) * (epochLpData[isQuote].positions / 10 ** 2)) / divisor;
+    // we use !isQuote to get PnL of traders
+    int unrealizedPnl = (isQuote ? (currentPrice - epochLpData[!isQuote].averageOpenPrice) : (epochLpData[!isQuote].averageOpenPrice - currentPrice)) * (epochLpData[!isQuote].positions / 10 ** 2) / divisor;
 
-    // totalDeposits is ie6
-    int deposits = epochLpData[isQuote].totalDeposits - unrealizedPnl;
+    // totalDeposits is ie6 for isQuote, ie18 for isBase
+    int deposits = epochLpData[isQuote].totalDeposits - (isQuote ? unrealizedPnl : ((unrealizedPnl * 10 ** 2) * 10 ** 18) / currentPrice);
+
+    console.log('Current price');
+    console.logInt(currentPrice);
+
+    console.log('Average open price');
+    console.logInt(epochLpData[!isQuote].averageOpenPrice);
 
     console.log('Total Deposits');
     console.logInt(epochLpData[isQuote].totalDeposits);
@@ -550,7 +566,7 @@ contract OptionPerp is Ownable, Pausable {
     console.logInt(_getTotalSupply(isQuote));
 
     if (deposits == 0) amountOut = amountIn;
-    else amountOut = (amountIn * _getTotalSupply(isQuote)) / (epochLpData[isQuote].totalDeposits);
+    else amountOut = (amountIn * _getTotalSupply(isQuote)) / deposits;
 
     console.log('Amount out');
     console.logInt(amountOut);
@@ -574,6 +590,13 @@ contract OptionPerp is Ownable, Pausable {
       (_isShort ? _size / 10 ** 2 : _sizeInBase),
       "Not enough liquidity to open position"
     );
+
+    console.log('isShort');
+    console.log(_isShort);
+    console.log('Total deposits');
+    console.logInt(epochLpData[_isShort].totalDeposits);
+    console.log('Total active');
+    console.logInt(epochLpData[_isShort].activeDeposits);
 
     // Calculate premium for ATM option in USD
     // If is short, premium is in quote.decimals(). if long, base.decimals();
