@@ -1075,8 +1075,8 @@ contract OptionPerp is Ownable, Pausable {
     int liquidationFee = perpPositions[id].margin * feeLiquidation / divisor;
 
     epochData[isShort].margin -= perpPositions[id].margin;
-    epochData[isShort].activeDeposits -= perpPositions[id].size;
-    epochData[isShort].totalDeposits += perpPositions[id].size + perpPositions[id].margin - liquidationFee;
+    epochData[isShort].activeDeposits -= perpPositions[id].size / 10 ** 2;
+    epochData[isShort].totalDeposits += (perpPositions[id].size / 10 ** 2) + perpPositions[id].margin - liquidationFee;
     epochData[isShort].oi -= perpPositions[id].size;
     epochData[isShort].positions -= perpPositions[id].positions;
 
