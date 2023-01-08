@@ -20,7 +20,7 @@ contract LpPositionMinter is Ownable, ERC20PresetMinterPauser {
         optionPerpContract = _optionPerpContract;
     }
 
-    function mintFromOptionPerp(address receiver, uint256 amount) public {
+    function mint(address receiver, uint256 amount) public override {
         require(
           msg.sender == optionPerpContract,
           "Only option perp contract can mint an option perp deposit token"
