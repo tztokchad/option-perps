@@ -170,7 +170,7 @@ describe("Option Perp", function() {
 
     expect(deposited.toString()).equals(amount.toString());
 
-    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
+    expect((await optionPerp.epochData(true)).totalDeposits).equals(
       "10000000000"
     );
   });
@@ -215,7 +215,7 @@ describe("Option Perp", function() {
       startBalance.sub(toDecimals(500, 6))
     );
 
-    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
+    expect((await optionPerp.epochData(true)).totalDeposits).equals(
       "10000000000" // TOTAL DEPOSITS DONT CHANGE
     );
   });
@@ -243,7 +243,7 @@ describe("Option Perp", function() {
     // Initial balance was 100k
     expect(endBalance).to.eq('100489963711');
 
-    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
+    expect((await optionPerp.epochData(true)).totalDeposits).equals(
       "10000000000" // TOTAL DEPOSITS DONT CHANGE
     );
   });
@@ -269,7 +269,7 @@ describe("Option Perp", function() {
     // We open a long of $1000 with $500 of collateral (lev 2x)
     // We open a short of $3000 with $910 of collateral (lev 3.29x)
 
-    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
+    expect((await optionPerp.epochData(true)).totalDeposits).equals(
       "10000000000" // TOTAL DEPOSITS DONT CHANGE
     );
   });
@@ -314,7 +314,7 @@ describe("Option Perp", function() {
     const shortLiquidationPrice = await optionPerp._getPositionLiquidationPrice(2);
     expect(shortLiquidationPrice).to.eq(144285760566);
 
-    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
+    expect((await optionPerp.epochData(true)).totalDeposits).equals(
       "10000000000" // TOTAL DEPOSITS DONT CHANGE
     );
   });
@@ -333,7 +333,7 @@ describe("Option Perp", function() {
     const pnl = await optionPerp._getPositionPnl(3);
     expect(pnl).to.eq(12);
 
-    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
+    expect((await optionPerp.epochData(true)).totalDeposits).equals(
       "10847001691" // TOTAL DEPOSITS CHANGE AS LP ACQUIRE -PNL FUNDING AND FEES
     );
   });
@@ -362,7 +362,7 @@ describe("Option Perp", function() {
     shortPositionValue = await optionPerp._getPositionValue(3);
     expect(shortPositionValue).to.eq(1752336435); // Position value increases
 
-    expect((await optionPerp.epochLpData(true)).totalDeposits).equals(
+    expect((await optionPerp.epochData(true)).totalDeposits).equals(
       "10847001691" // TOTAL DEPOSITS CHANGE AS LP ACQUIRE -PNL FUNDING AND FEES
     );
   });
@@ -384,7 +384,7 @@ describe("Option Perp", function() {
     const lpTokenAmount = await quoteLpPositionMinter.balanceOf(user2.address);
 
     // After this user deposits there will be 10847 + 10000 = 20847
-    // We'll have (amountIn * _getTotalSupply(isQuote)) / (epochLpData[currentEpoch][isQuote].totalDeposits - pnl) =
+    // We'll have (amountIn * _getTotalSupply(isQuote)) / (epochData[currentEpoch][isQuote].totalDeposits - pnl) =
     // = (10000 * 10000) / (10847001691 - pnl) = adjusting decimals is 9758.952229 LP tokens
     // 600 is unrealized pnl of traders
 
@@ -415,13 +415,13 @@ describe("Option Perp", function() {
 
     const lpTokenAmount = await quoteLpPositionMinter.balanceOf(user2.address);
 
-    expect(lpTokenAmount.toString()).equals("2469501448");
+    expect(lpTokenAmount.toString()).equals("4879476114");
 
     const totalSupply = await quoteLpPositionMinter.totalSupply();
 
     console.log(quoteLpPositionMinter.address);
 
-    expect(totalSupply).to.eq("12469501448");
+    expect(totalSupply).to.eq("14879476114");
 
     const expectedAmountOut = await optionPerp.connect(user2).callStatic.withdraw(true, lpTokenAmount, 0);
     expect(expectedAmountOut).to.eq("4999999999");
@@ -543,16 +543,16 @@ describe("Option Perp", function() {
 
     const lpTokenAmount = await quoteLpPositionMinter.balanceOf(user2.address);
 
-    expect(lpTokenAmount.toString()).equals("283853823");
+    expect(lpTokenAmount.toString()).equals("310690135");
 
     const totalSupply = await quoteLpPositionMinter.totalSupply();
 
     console.log(quoteLpPositionMinter.address);
 
-    expect(totalSupply).to.eq("10283853823");
+    expect(totalSupply).to.eq("10310690135");
 
     const expectedAmountOut = await optionPerp.connect(user2).callStatic.withdraw(true, lpTokenAmount, 0);
-    expect(expectedAmountOut).to.eq("4999999984");
+    expect(expectedAmountOut).to.eq("4999999985");
 
     // We pay 10 USDC to bots
     const priorityFees = "10000000";
@@ -577,7 +577,7 @@ describe("Option Perp", function() {
     expect(feesObtainedByBot).to.eq("5000000");
 
     const amountObtainedByUser = await usdc.balanceOf(user2.address);
-    expect(amountObtainedByUser).to.eq("9979999982");
+    expect(amountObtainedByUser).to.eq("9979999983");
   });
 
   it("open a short", async () => {
