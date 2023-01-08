@@ -543,16 +543,16 @@ describe("Option Perp", function() {
 
     const lpTokenAmount = await quoteLpPositionMinter.balanceOf(user2.address);
 
-    expect(lpTokenAmount.toString()).equals("310690135");
+    expect(lpTokenAmount.toString()).equals("4021863356");
 
     const totalSupply = await quoteLpPositionMinter.totalSupply();
 
     console.log(quoteLpPositionMinter.address);
 
-    expect(totalSupply).to.eq("10310690135");
+    expect(totalSupply).to.eq("14021863356");
 
     const expectedAmountOut = await optionPerp.connect(user2).callStatic.withdraw(true, lpTokenAmount, 0);
-    expect(expectedAmountOut).to.eq("4999999985");
+    expect(expectedAmountOut).to.eq("4999999999");
 
     // We pay 10 USDC to bots
     const priorityFees = "10000000";
@@ -577,7 +577,7 @@ describe("Option Perp", function() {
     expect(feesObtainedByBot).to.eq("5000000");
 
     const amountObtainedByUser = await usdc.balanceOf(user2.address);
-    expect(amountObtainedByUser).to.eq("9979999983");
+    expect(amountObtainedByUser).to.eq("9979999997");
   });
 
   it("open a short", async () => {
@@ -611,8 +611,8 @@ describe("Option Perp", function() {
     // Unrealized pnl is $1500
     // Total deposits are 10000000099754534490, we subtract pnl in ETH term (3) so we have 7000000099754534490
     // Total supply was 10000000000000000000
-    // Amount out is now (1 * 10 ** 18) * 10000000000000000000 / 7000000099754534490 = 1428571408213360598
-    expect(lpTokenAmount.toString()).equals("1428571408213360598");
+    // Amount out is now (1 * 10 ** 18) * 10000000000000000000 / 7000000000754534490 = 1428571428417441940
+    expect(lpTokenAmount.toString()).equals("1428571428417441940");
 
     // Test withdraw to see if we can get back our 1 ETH burning 1.4285 LP tokens
     await optionPerp.connect(user2).withdraw(false, lpTokenAmount, 0);
