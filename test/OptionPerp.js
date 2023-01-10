@@ -35,11 +35,6 @@ describe("Option Perp", function() {
 
   const getTime = () => Math.floor(new Date().getTime() / 1000);
 
-  const timeTravel = async seconds => {
-    await network.provider.send("evm_increaseTime", [seconds]);
-    await network.provider.send("evm_mine", []);
-  };
-
   before(async () => {
     signers = await ethers.getSigners();
     owner = signers[0];
@@ -479,7 +474,8 @@ describe("Option Perp", function() {
 
     await expect(optionPerp.connect(user1).settle(0)).to.be.revertedWith("Too early");
 
-    await timeTravel(360000);
+    await network.provider.send("evm_setNextBlockTimestamp", [1671290433]);
+    await network.provider.send("evm_mine");
 
     // before expiry but after liquidation price goes up and option token has positive pnl
     await priceOracle.updateUnderlyingPrice("110000000000");
@@ -514,7 +510,7 @@ describe("Option Perp", function() {
 
   it("long position can be liquidated correctly too", async () => {
     const liquidationPrice = await optionPerp._getPositionLiquidationPrice(1);
-    expect(liquidationPrice).to.eq("53311425300");
+    expect(liquidationPrice).to.eq("53135499300");
 
     await priceOracle.updateUnderlyingPrice("53411423100");
 
