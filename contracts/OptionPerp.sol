@@ -2,6 +2,7 @@
 pragma solidity ^0.8.9;
 
 import {IERC20} from "./interface/IERC20.sol";
+import {SafeERC20} from "./libraries/SafeERC20.sol";
 import {ILpPositionMinter} from "./interface/ILpPositionMinter.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
@@ -61,6 +62,7 @@ import "hardhat/console.sol";
 // - Withdraws are always open (with a priority queue system)
 
 contract OptionPerp is Ownable, Pausable {
+  using SafeERC20 for IERC20;
 
   IERC20 public base;
   IERC20 public quote;
@@ -386,10 +388,10 @@ contract OptionPerp is Ownable, Pausable {
     console.log(amountOut);
 
     if (isQuote) {
-      quote.transferFrom(msg.sender, address(this), amountIn);
+      quote.safeTransferFrom(msg.sender, address(this), amountIn);
       quoteLpPositionMinter.mint(msg.sender, amountOut);
     } else {
-      base.transferFrom(msg.sender, address(this), amountIn);
+      base.safeTransferFrom(msg.sender, address(this), amountIn);
       baseLpPositionMinter.mint(msg.sender, amountOut);
     }
 
@@ -497,12 +499,12 @@ contract OptionPerp is Ownable, Pausable {
       amountOut = (pendingWithdrawal.amountIn * deposits) / totalSupply;
       require(amountOut <= available, "Insufficient liquidity");
 
-      quote.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - pendingWithdrawal.priorityFee));
+      quote.safeTransfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - pendingWithdrawal.priorityFee));
 
       amountOutFeesWithheld = pendingWithdrawal.priorityFee * feePriorityWithheld / (divisor * 100);
       amountOutFeesForBot = pendingWithdrawal.priorityFee - amountOutFeesWithheld;
 
-      quote.transfer(msg.sender, _safeConvertToUint(amountOutFeesForBot));
+      quote.safeTransfer(msg.sender, _safeConvertToUint(amountOutFeesForBot));
     } else {
       baseLpPositionMinter.burnFromOptionPerp(pendingWithdrawal.user, _safeConvertToUint(pendingWithdrawal.amountIn));
 
@@ -516,12 +518,12 @@ contract OptionPerp is Ownable, Pausable {
       amountOut = (pendingWithdrawal.amountIn * deposits) / totalSupply;
       require(amountOut <= available, "Insufficient liquidity");
 
-      base.transfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - pendingWithdrawal.priorityFee));
+      base.safeTransfer(pendingWithdrawal.user, _safeConvertToUint(amountOut - pendingWithdrawal.priorityFee));
 
       amountOutFeesWithheld = pendingWithdrawal.priorityFee * feePriorityWithheld / (divisor * 100);
       amountOutFeesForBot = pendingWithdrawal.priorityFee - amountOutFeesWithheld;
 
-      base.transfer(msg.sender, _safeConvertToUint(amountOutFeesForBot));
+      base.safeTransfer(msg.sender, _safeConvertToUint(amountOutFeesForBot));
     }
 
     require(amountOut - pendingWithdrawal.priorityFee >= pendingWithdrawal.minAmountOut, "Insufficient amount out");
@@ -666,7 +668,7 @@ contract OptionPerp is Ownable, Pausable {
         epochData[isShort].positions;
 
     // Transfer collateral from user
-    quote.transferFrom(
+    quote.safeTransferFrom(
         msg.sender,
         address(this),
         _safeConvertToUint(collateralAmount)
@@ -787,7 +789,7 @@ contract OptionPerp is Ownable, Pausable {
     epochData[perpPositions[id].isShort].margin += collateralAmount;
     perpPositions[id].margin += collateralAmount;
     // Move collateral
-    IERC20(quote).transferFrom(
+    IERC20(quote).safeTransferFrom(
       msg.sender,
       address(this),
       _safeConvertToUint(collateralAmount)
@@ -816,7 +818,7 @@ contract OptionPerp is Ownable, Pausable {
     require(_isPositionCollateralized(id), "Amount to withdraw is too big");
 
     // Move collateral
-    IERC20(quote).transfer(
+    IERC20(quote).safeTransfer(
        msg.sender,
       _safeConvertToUint(collateralAmount)
     );
@@ -975,11 +977,11 @@ contract OptionPerp is Ownable, Pausable {
     require(pnl > 0, "Negative pnl");
 
     if (optionPositions[id].isPut) {
-      quote.transfer(owner, _safeConvertToUint(pnl));
+      quote.safeTransfer(owner, _safeConvertToUint(pnl));
       epochData[true].totalDeposits -= pnl;
     }
     else {
-      base.transfer(owner, _safeConvertToUint(pnl));
+      base.safeTransfer(owner, _safeConvertToUint(pnl));
       epochData[false].totalDeposits -= pnl;
     }
 
@@ -1049,7 +1051,7 @@ contract OptionPerp is Ownable, Pausable {
         amountOut = _swapUsingGmxExactOut(address(base), address(quote), amountOut);
       }
 
-      quote.transfer(perpPositionMinter.ownerOf(id), amountOut);
+      quote.safeTransfer(perpPositionMinter.ownerOf(id), amountOut);
     } else amountOut = 0;
 
     emit ClosePerpPosition(
@@ -1138,7 +1140,7 @@ contract OptionPerp is Ownable, Pausable {
 
       for (uint256 i; i < tokens.length; ) {
           token = IERC20(tokens[i]);
-          token.transfer(msg.sender, token.balanceOf(address(this)));
+          token.safeTransfer(msg.sender, token.balanceOf(address(this)));
 
           unchecked {
               ++i;
